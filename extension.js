@@ -314,6 +314,16 @@
                     },
                     '---',
                     {
+                        opcode: 'searchForNewControllers',
+                        blockType: Scratch.BlockType.COMMAND,
+                        text: 'Search for new controllers'
+                    },
+                    {
+                        opcode: 'requestHID',
+                        blockType: Scratch.BlockType.COMMAND,
+                        text: 'Request HID'
+                    },
+                    {
                         opcode: 'connectDualSense',
                         blockType: Scratch.BlockType.COMMAND,
                         text: 'connect DualSense for lights'
@@ -375,6 +385,18 @@
                         }
                     },
                     {
+                        opcode: 'adaptiveTriggerModeNumber',
+                        blockType: Scratch.BlockType.REPORTER,
+                        text: '[MODE] adaptive trigger mode',
+                        arguments: {
+                            MODE: {
+                                type: Scratch.ArgumentType.STRING,
+                                menu: 'adaptiveTriggerModes',
+                                defaultValue: '1. Off'
+                            }
+                        }
+                    },
+                    {
                         opcode: 'setAdaptiveTriggerMode',
                         blockType: Scratch.BlockType.COMMAND,
                         text: 'Adaptive trigger mode controller [CONTROLLER] trigger [TRIGGER] set [MODE]',
@@ -410,29 +432,76 @@
                     adaptiveTriggers: ['L', 'R'],
                     lightTransition: ['Fade', 'Instant'],
                     adaptiveTriggerModes: [
-                        'Off',
-                        'Feedback',
-                        'Weapon',
-                        'Vibration',
-                        'Slope Feedback',
-                        'Multiple-Position Feedback',
-                        'Multiple-Position Vibration',
-                        'GameCube Emulation',
-                        'Machine Gun / Automatic',
-                        'Galloping',
-                        'Pistol / Semi-Automatic',
-                        'Rifle / Bow & Arrow',
-                        'Choppy',
-                        'Soft',
-                        'Medium',
-                        'Max',
-                        'Pulse / Tension Guard',
-                        'Rumble Transmission',
-                        'Lock up',
-                        'Calibration (MAY ALTER REAL CALIBRATION!)'
+                        '1. Off',
+                        '2. Feedback',
+                        '3. Weapon',
+                        '4. Vibration',
+                        '5. Slope Feedback',
+                        '6. Multiple-Position Feedback',
+                        '7. Multiple-Position Vibration',
+                        '8. GameCube Emulation',
+                        '9. Machine Gun / Automatic',
+                        '10. Galloping',
+                        '11. Pistol / Semi-Automatic',
+                        '12. Rifle / Bow & Arrow',
+                        '13. Choppy',
+                        '14. Soft',
+                        '15. Medium',
+                        '16. Max',
+                        '17. Pulse / Tension Guard',
+                        '18. Rumble Transmission',
+                        '19. Lock up',
+                        '20. Calibration (MAY ALTER REAL CALIBRATION!)'
                     ]
                 }
             };
+        }
+
+        async searchForNewControllers() {
+            // Refresh the Gamepad API's currently visible controller list.
+            // Browsers normally update this through gamepadconnected events,
+            // but polling immediately also helps after a controller is paired
+            // or connected while the page is already open.
+            this.poll();
+
+            if ('hid' in navigator) {
+                try {
+                    await navigator.hid.getDevices();
+                } catch (_) {
+                    // HID access is optional.
+                }
+            }
+        }
+
+        async requestHID() {
+            if (!('hid' in navigator)) return false;
+
+            try {
+                const devices = await navigator.hid.requestDevice({
+                    filters: [{ vendorId: 0x054c }]
+                });
+
+                const device = devices && devices[0];
+                if (!device) return false;
+
+                if (!device.opened) await device.open();
+
+                // Keep the selected HID device available for DualSense features.
+                if (device.vendorId === 0x054c) {
+                    this.dualSenseHid = device;
+                    this.dualSenseConnection = this.detectDualSenseTransport(device);
+                }
+
+                return true;
+            } catch (_) {
+                return false;
+            }
+        }
+
+        adaptiveTriggerModeNumber(args) {
+            const value = String(args.MODE || '');
+            const match = value.match(/^(\\d+)\\./);
+            return match ? Number(match[1]) : 0;
         }
 
         controllerCount() {
