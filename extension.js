@@ -387,13 +387,9 @@
                     {
                         opcode: 'adaptiveTriggerModeNumber',
                         blockType: Scratch.BlockType.REPORTER,
-                        text: '[MODE] adaptive trigger mode',
+                        text: '[NUMBER] adaptive trigger mode',
                         arguments: {
-                            MODE: {
-                                type: Scratch.ArgumentType.STRING,
-                                menu: 'adaptiveTriggerModes',
-                                defaultValue: '1. Off'
-                            }
+                            NUMBER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }
                         }
                     },
                     {
@@ -458,40 +454,26 @@
         }
 
         async searchForNewControllers() {
-            // Refresh the Gamepad API's currently visible controller list.
-            // Browsers normally update this through gamepadconnected events,
-            // but polling immediately also helps after a controller is paired
-            // or connected while the page is already open.
+            // Refresh the currently visible Gamepad API controllers.
             this.poll();
-
             if ('hid' in navigator) {
                 try {
                     await navigator.hid.getDevices();
-                } catch (_) {
-                    // HID access is optional.
-                }
+                } catch (_) {}
             }
         }
 
         async requestHID() {
             if (!('hid' in navigator)) return false;
-
             try {
                 const devices = await navigator.hid.requestDevice({
                     filters: [{ vendorId: 0x054c }]
                 });
-
                 const device = devices && devices[0];
                 if (!device) return false;
-
                 if (!device.opened) await device.open();
-
-                // Keep the selected HID device available for DualSense features.
-                if (device.vendorId === 0x054c) {
-                    this.dualSenseHid = device;
-                    this.dualSenseConnection = this.detectDualSenseTransport(device);
-                }
-
+                this.dualSenseHid = device;
+                this.dualSenseConnection = this.detectDualSenseTransport(device);
                 return true;
             } catch (_) {
                 return false;
@@ -499,9 +481,8 @@
         }
 
         adaptiveTriggerModeNumber(args) {
-            const value = String(args.MODE || '');
-            const match = value.match(/^(\\d+)\\./);
-            return match ? Number(match[1]) : 0;
+            const number = Math.floor(Number(args.NUMBER));
+            return number >= 1 && number <= 20 ? number : 0;
         }
 
         controllerCount() {
