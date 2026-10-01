@@ -820,13 +820,20 @@
         touchpadX(args) {
             const p = this.getPad(args.CONTROLLER);
             if (!p || this.controllerType(p) !== 'PlayStation') return 0;
-            return this.dualSenseTouchX;
+
+            // Convert the DualSense touchpad's 0..1919 horizontal coordinate
+            // to Gandi's stage X coordinate (-240..240).
+            return (this.dualSenseTouchX / 1919) * 480 - 240;
         }
 
         touchpadY(args) {
             const p = this.getPad(args.CONTROLLER);
             if (!p || this.controllerType(p) !== 'PlayStation') return 0;
-            return this.dualSenseTouchY;
+
+            // Convert the DualSense touchpad's 0..1079 vertical coordinate
+            // to Gandi's stage Y coordinate (180..-180). The Y axis is inverted
+            // because touchpad Y increases downward while Gandi Y increases upward.
+            return 180 - (this.dualSenseTouchY / 1079) * 360;
         }
 
         touchpadTouched(args) {
