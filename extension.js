@@ -375,9 +375,19 @@
                         'Feedback',
                         'Weapon',
                         'Vibration',
-                        'Bow',
-                        'Galloping',
-                        'Machine',
+                        'Slope Feedback',
+                        'Multiple-Position Feedback',
+                        'Multiple-Position Vibration',
+                        'GameCube Emulation',
+                        'Machine Gun / Automatic',
+                        'Pistol / Semi-Automatic',
+                        'Rifle / Bow & Arrow',
+                        'Choppy',
+                        'Soft',
+                        'Medium',
+                        'Max',
+                        'Pulse / Tension Guard',
+                        'Rumble Transmission',
                         'Calibration'
                     ]
                 }
@@ -673,9 +683,19 @@
                 'Feedback': 0x21,
                 'Weapon': 0x25,
                 'Vibration': 0x26,
-                'Bow': 0x22,
-                'Galloping': 0x23,
-                'Machine': 0x27,
+                'Slope Feedback': 0x25,
+                'Multiple-Position Feedback': 0x21,
+                'Multiple-Position Vibration': 0x26,
+                'GameCube Emulation': 0x05,
+                'Machine Gun / Automatic': 0x26,
+                'Pistol / Semi-Automatic': 0x25,
+                'Rifle / Bow & Arrow': 0x22,
+                'Choppy': 0x26,
+                'Soft': 0x21,
+                'Medium': 0x21,
+                'Max': 0x21,
+                'Pulse / Tension Guard': 0x25,
+                'Rumble Transmission': 0x26,
                 'Calibration': 0xFC
             };
             return Object.prototype.hasOwnProperty.call(modes, mode) ? modes[mode] : 0x05;
@@ -686,64 +706,120 @@
 
             const trigger = String(args.TRIGGER || 'L').toUpperCase() === 'R' ? 'R' : 'L';
             const modeName = String(args.MODE || 'Off');
-            const mode = this.adaptiveTriggerMode(modeName);
-
-            // Presets use safe, conservative parameters so the block can be
-            // used without requiring ten extra parameter inputs. The protocol
-            // supports richer parameterized effects, but these presets make
-            // each named mode immediately useful.
-            const effect = new Uint8Array(11);
-            effect[0] = mode;
+            const effect = new Uint8Array(10);
+            effect[0] = this.adaptiveTriggerMode(modeName);
 
             switch (modeName) {
+                case 'Off':
+                    effect[0] = 0x05;
+                    break;
                 case 'Feedback':
-                    effect[1] = 3;   // start position
-                    effect[2] = 6;   // force
+                    effect[0] = 0x21;
+                    effect[1] = 3;
+                    effect[2] = 6;
                     break;
                 case 'Weapon':
-                    effect[1] = 2;   // start zone mask bit 2
-                    effect[2] = 0x02;
-                    effect[3] = 6;   // strength
+                    effect[0] = 0x25;
+                    effect[1] = (1 << 2) | (1 << 6);
+                    effect[2] = 6;
                     break;
                 case 'Vibration':
-                    effect[1] = 0xFF;
-                    effect[2] = 0x03; // active zones + amplitude bits
-                    effect[9] = 30;    // frequency
+                    effect[0] = 0x26;
+                    effect[1] = 1;
+                    effect[2] = 5;
+                    effect[3] = 40;
                     break;
-                case 'Bow':
-                    effect[1] = 0x02;
-                    effect[2] = 0x01;
-                    effect[3] = (6 & 0x07) | ((4 & 0x07) << 3);
+                case 'Slope Feedback':
+                    effect[0] = 0x25;
+                    effect[1] = 0;
+                    effect[2] = 9;
+                    effect[3] = 2;
+                    effect[4] = 7;
                     break;
-                case 'Galloping':
-                    effect[1] = 0x02;
-                    effect[2] = 0x02;
-                    effect[3] = (2 & 0x07) | ((4 & 0x07) << 3);
-                    effect[4] = 8;
+                case 'Multiple-Position Feedback':
+                    effect[0] = 0x21;
+                    effect[1] = 0;
+                    effect[2] = 0;
+                    effect[3] = 0x88;
+                    effect[4] = 0x88;
                     break;
-                case 'Machine':
-                    effect[1] = 0x02;
-                    effect[2] = 0x02;
-                    effect[3] = (6 & 0x07) | ((2 & 0x07) << 3);
-                    effect[4] = 30;
-                    effect[5] = 5;
+                case 'Multiple-Position Vibration':
+                    effect[0] = 0x26;
+                    effect[1] = 0;
+                    effect[2] = 0;
+                    effect[3] = 0x22;
+                    effect[4] = 0x44;
+                    effect[5] = 0x22;
+                    effect[7] = 35;
+                    break;
+                case 'GameCube Emulation':
+                    effect[0] = 0x25;
+                    effect[1] = (1 << 7) | (1 << 9);
+                    effect[2] = 7;
+                    break;
+                case 'Machine Gun / Automatic':
+                    effect[0] = 0x26;
+                    effect[1] = 1;
+                    effect[2] = 6;
+                    effect[3] = 55;
+                    break;
+                case 'Pistol / Semi-Automatic':
+                    effect[0] = 0x25;
+                    effect[1] = (1 << 3) | (1 << 6);
+                    effect[2] = 8;
+                    break;
+                case 'Rifle / Bow & Arrow':
+                    effect[0] = 0x22;
+                    effect[1] = 2;
+                    effect[2] = 6;
+                    effect[3] = 4;
+                    break;
+                case 'Choppy':
+                    effect[0] = 0x26;
+                    effect[1] = 2;
+                    effect[2] = 7;
+                    effect[3] = 18;
+                    break;
+                case 'Soft':
+                    effect[0] = 0x21;
+                    effect[1] = 0;
+                    effect[2] = 3;
+                    break;
+                case 'Medium':
+                    effect[0] = 0x21;
+                    effect[1] = 0;
+                    effect[2] = 5;
+                    break;
+                case 'Max':
+                    effect[0] = 0x21;
+                    effect[1] = 0;
+                    effect[2] = 8;
+                    break;
+                case 'Pulse / Tension Guard':
+                    effect[0] = 0x25;
+                    effect[1] = (1 << 0) | (1 << 2);
+                    effect[2] = 7;
+                    break;
+                case 'Rumble Transmission':
+                    effect[0] = 0x26;
+                    effect[1] = 0;
+                    effect[2] = 6;
+                    effect[3] = 30;
                     break;
                 case 'Calibration':
-                    // Calibration is a controller firmware operation. No
-                    // additional parameters are required.
-                    break;
-                case 'Off':
-                default:
+                    effect[0] = 0xFC;
                     break;
             }
 
             return this.sendDualSenseOutput(common => {
-                // Right trigger effect starts at common offset 10; left at 21.
-                const offset = trigger === 'R' ? 10 : 21;
-                common[1] |= 0x04; // keep lightbar control enabled if it was used
-                for (let i = 0; i < 11; i++) common[offset + i] = effect[i];
+                const offset = trigger === 'R' ? 10 : 20;
+                common[0] |= trigger === 'R' ? 0x04 : 0x08;
+                for (let i = 0; i < effect.length; i++) {
+                    common[offset + i] = effect[i];
+                }
             });
         }
+
     }
 
     Scratch.extensions.register(new ControllerExtension());
