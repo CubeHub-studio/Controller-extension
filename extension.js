@@ -998,10 +998,10 @@
                     this.setTriggerVibration(effect, 0, 5, 30);
                     break;
                 case 'Lock up':
-                    // Maximum continuous resistance starting immediately.
-                    // This creates a firm virtual wall; it cannot physically
-                    // prevent the trigger from moving all the way down.
-                    this.setTriggerFeedback(effect, 0, 8);
+                    // Maximum resistance beginning at ~20% trigger travel.
+                    // This creates the physical trigger-stop / jam sensation.
+                    // The geared actuator can yield under extreme force by design.
+                    this.setTriggerFeedback(effect, 2, 8);
                     break;
                 case 'Calibration':
                     effect[0] = 0x05;
