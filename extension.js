@@ -677,148 +677,372 @@
             });
         }
 
+        async requireDualSenseHidForTriggers() {
+            if (!('hid' in navigator)) return false;
+
+            if (this.dualSenseConnected()) return true;
+
+            try {
+                // Adaptive triggers are vendor-specific HID output features.
+                // Do not fall back to the Gamepad API for trigger effects.
+                const devices = await navigator.hid.getDevices();
+                let device = devices.find(d =>
+                    d.vendorId === 0x054c &&
+                    (!d.productId || d.productId === 0x0ce6 || d.productId === 0x0df2)
+                );
+
+                if (!device) {
+                    const requested = await navigator.hid.requestDevice({
+                        filters: [{ vendorId: 0x054c }]
+                    });
+                    device = requested && requested[0];
+                }
+
+                if (!device || device.vendorId !== 0x054c) return false;
+                if (!device.opened) await device.open();
+
+                this.dualSenseHid = device;
+                this.dualSenseConnection = this.detectDualSenseTransport(device);
+                return true;
+            } catch (_) {
+                return false;
+            }
+        }
+
+        writeTriggerFeedback(effect, trigger) {
+            const offset = trigger === 'R' ? 10 : 20;
+            for (let i = 0; i < 10; i++) effect[offset + i] = 0;
+        }
+
+        setTriggerFeedback(effect, position, strength) {
+            position = Math.max(0, Math.min(9, Math.floor(position)));
+            strength = Math.max(0, Math.min(8, Math.floor(strength)));
+
+            effect.fill(0);
+            if (strength <= 0) {
+                effect[0] = 0x05;
+                return;
+            }
+
+            let activeZones = 0;
+            let forceZones = 0;
+            const forceValue = (strength - 1) & 0x07;
+
+            for (let i = position; i < 10; i++) {
+                activeZones |= (1 << i);
+                forceZones |= forceValue << (3 * i);
+            }
+
+            effect[0] = 0x21;
+            effect[1] = activeZones & 0xFF;
+            effect[2] = (activeZones >>> 8) & 0xFF;
+            effect[3] = forceZones & 0xFF;
+            effect[4] = (forceZones >>> 8) & 0xFF;
+            effect[5] = (forceZones >>> 16) & 0xFF;
+            effect[6] = (forceZones >>> 24) & 0xFF;
+        }
+
+        setTriggerWeapon(effect, start, end, strength) {
+            start = Math.max(2, Math.min(7, Math.floor(start)));
+            end = Math.max(start + 1, Math.min(8, Math.floor(end)));
+            strength = Math.max(0, Math.min(8, Math.floor(strength)));
+
+            effect.fill(0);
+            if (strength <= 0) {
+                effect[0] = 0x05;
+                return;
+            }
+
+            const zones = (1 << start) | (1 << end);
+            effect[0] = 0x25;
+            effect[1] = zones & 0xFF;
+            effect[2] = (zones >>> 8) & 0xFF;
+            effect[3] = (strength - 1) & 0x07;
+        }
+
+        setTriggerVibration(effect, position, amplitude, frequency) {
+            position = Math.max(0, Math.min(9, Math.floor(position)));
+            amplitude = Math.max(0, Math.min(8, Math.floor(amplitude)));
+            frequency = Math.max(1, Math.min(255, Math.floor(frequency)));
+
+            effect.fill(0);
+            if (amplitude <= 0) {
+                effect[0] = 0x05;
+                return;
+            }
+
+            let activeZones = 0;
+            let amplitudeZones = 0;
+            const amplitudeValue = (amplitude - 1) & 0x07;
+
+            for (let i = position; i < 10; i++) {
+                activeZones |= (1 << i);
+                amplitudeZones |= amplitudeValue << (3 * i);
+            }
+
+            effect[0] = 0x26;
+            effect[1] = activeZones & 0xFF;
+            effect[2] = (activeZones >>> 8) & 0xFF;
+            effect[3] = amplitudeZones & 0xFF;
+            effect[4] = (amplitudeZones >>> 8) & 0xFF;
+            effect[5] = (amplitudeZones >>> 16) & 0xFF;
+            effect[6] = (amplitudeZones >>> 24) & 0xFF;
+            effect[9] = frequency;
+        }
+
+        setTriggerMultipleFeedback(effect, strengths) {
+            effect.fill(0);
+            let activeZones = 0;
+            let forceZones = 0;
+
+            for (let i = 0; i < 10; i++) {
+                const strength = Math.max(0, Math.min(8, Math.floor(strengths[i] || 0)));
+                if (strength > 0) {
+                    activeZones |= (1 << i);
+                    forceZones |= ((strength - 1) & 0x07) << (3 * i);
+                }
+            }
+
+            if (!activeZones) {
+                effect[0] = 0x05;
+                return;
+            }
+
+            effect[0] = 0x21;
+            effect[1] = activeZones & 0xFF;
+            effect[2] = (activeZones >>> 8) & 0xFF;
+            effect[3] = forceZones & 0xFF;
+            effect[4] = (forceZones >>> 8) & 0xFF;
+            effect[5] = (forceZones >>> 16) & 0xFF;
+            effect[6] = (forceZones >>> 24) & 0xFF;
+        }
+
+        setTriggerMultipleVibration(effect, amplitudes, frequency) {
+            effect.fill(0);
+            let activeZones = 0;
+            let amplitudeZones = 0;
+
+            for (let i = 0; i < 10; i++) {
+                const amplitude = Math.max(0, Math.min(8, Math.floor(amplitudes[i] || 0)));
+                if (amplitude > 0) {
+                    activeZones |= (1 << i);
+                    amplitudeZones |= ((amplitude - 1) & 0x07) << (3 * i);
+                }
+            }
+
+            if (!activeZones || frequency <= 0) {
+                effect[0] = 0x05;
+                return;
+            }
+
+            effect[0] = 0x26;
+            effect[1] = activeZones & 0xFF;
+            effect[2] = (activeZones >>> 8) & 0xFF;
+            effect[3] = amplitudeZones & 0xFF;
+            effect[4] = (amplitudeZones >>> 8) & 0xFF;
+            effect[5] = (amplitudeZones >>> 16) & 0xFF;
+            effect[6] = (amplitudeZones >>> 24) & 0xFF;
+            effect[9] = Math.max(1, Math.min(255, Math.floor(frequency)));
+        }
+
         adaptiveTriggerMode(mode) {
             const modes = {
                 'Off': 0x05,
                 'Feedback': 0x21,
                 'Weapon': 0x25,
                 'Vibration': 0x26,
-                'Slope Feedback': 0x25,
+                'Slope Feedback': 0x21,
                 'Multiple-Position Feedback': 0x21,
                 'Multiple-Position Vibration': 0x26,
-                'GameCube Emulation': 0x05,
-                'Machine Gun / Automatic': 0x26,
+                'GameCube Emulation': 0x21,
+                'Machine Gun / Automatic': 0x27,
                 'Pistol / Semi-Automatic': 0x25,
                 'Rifle / Bow & Arrow': 0x22,
-                'Choppy': 0x26,
+                'Choppy': 0x21,
                 'Soft': 0x21,
                 'Medium': 0x21,
                 'Max': 0x21,
                 'Pulse / Tension Guard': 0x25,
                 'Rumble Transmission': 0x26,
-                'Calibration': 0xFC
+                'Calibration': 0x05
             };
             return Object.prototype.hasOwnProperty.call(modes, mode) ? modes[mode] : 0x05;
         }
 
         async setAdaptiveTriggerMode(args) {
-            if (!this.dualSenseConnected()) return false;
+            // Adaptive triggers are HID-only. The Gamepad API cannot send the
+            // vendor-specific DualSense trigger effect report.
+            if (!await this.requireDualSenseHidForTriggers()) return false;
+
+            const controller = this.getPad(args.CONTROLLER);
+            if (!controller || this.controllerType(controller) !== 'PlayStation') return false;
 
             const trigger = String(args.TRIGGER || 'L').toUpperCase() === 'R' ? 'R' : 'L';
             const modeName = String(args.MODE || 'Off');
             const effect = new Uint8Array(10);
-            effect[0] = this.adaptiveTriggerMode(modeName);
 
             switch (modeName) {
                 case 'Off':
                     effect[0] = 0x05;
                     break;
+
                 case 'Feedback':
-                    effect[0] = 0x21;
-                    effect[1] = 3;
-                    effect[2] = 6;
+                    this.setTriggerFeedback(effect, 0, 6);
                     break;
+
                 case 'Weapon':
-                    effect[0] = 0x25;
-                    effect[1] = (1 << 2) | (1 << 6);
-                    effect[2] = 6;
-                    break;
-                case 'Vibration':
-                    effect[0] = 0x26;
-                    effect[1] = 1;
-                    effect[2] = 5;
-                    effect[3] = 40;
-                    break;
-                case 'Slope Feedback':
-                    effect[0] = 0x25;
-                    effect[1] = 0;
-                    effect[2] = 9;
-                    effect[3] = 2;
-                    effect[4] = 7;
-                    break;
-                case 'Multiple-Position Feedback':
-                    effect[0] = 0x21;
-                    effect[1] = 0;
-                    effect[2] = 0;
-                    effect[3] = 0x88;
-                    effect[4] = 0x88;
-                    break;
-                case 'Multiple-Position Vibration':
-                    effect[0] = 0x26;
-                    effect[1] = 0;
-                    effect[2] = 0;
-                    effect[3] = 0x22;
-                    effect[4] = 0x44;
-                    effect[5] = 0x22;
-                    effect[7] = 35;
-                    break;
-                case 'GameCube Emulation':
-                    effect[0] = 0x25;
-                    effect[1] = (1 << 7) | (1 << 9);
-                    effect[2] = 7;
-                    break;
-                case 'Machine Gun / Automatic':
-                    effect[0] = 0x26;
-                    effect[1] = 1;
-                    effect[2] = 6;
-                    effect[3] = 55;
-                    break;
                 case 'Pistol / Semi-Automatic':
-                    effect[0] = 0x25;
-                    effect[1] = (1 << 3) | (1 << 6);
-                    effect[2] = 8;
+                    this.setTriggerWeapon(effect, 2, 7, 6);
                     break;
+
+                case 'Vibration':
+                    this.setTriggerVibration(effect, 0, 6, 40);
+                    break;
+
+                case 'Slope Feedback': {
+                    // Apple-style slope feedback is represented by the
+                    // official multiple-position feedback effect: a linear
+                    // resistance ramp over all ten trigger zones.
+                    this.setTriggerMultipleFeedback(effect, [1, 2, 3, 4, 5, 6, 7, 7, 8, 8]);
+                    break;
+                }
+
+                case 'Multiple-Position Feedback':
+                    this.setTriggerMultipleFeedback(effect, [2, 2, 4, 4, 6, 6, 8, 8, 5, 5]);
+                    break;
+
+                case 'Multiple-Position Vibration':
+                    this.setTriggerMultipleVibration(effect, [2, 4, 6, 8, 6, 4, 2, 4, 6, 8], 35);
+                    break;
+
+                case 'GameCube Emulation':
+                    // GameCube-style triggers have a firm stop followed by a
+                    // strong final section. This uses the safe official
+                    // feedback encoding rather than an undocumented debug mode.
+                    this.setTriggerMultipleFeedback(effect, [0, 0, 0, 4, 6, 8, 8, 8, 8, 8]);
+                    break;
+
+                case 'Machine Gun / Automatic':
+                    // Nielk1's Machine effect: alternating amplitudes with a
+                    // controllable frequency/period. This is firmware mode 0x27.
+                    effect[0] = 0x27;
+                    {
+                        const zones = (1 << 1) | (1 << 9);
+                        effect[1] = zones & 0xFF;
+                        effect[2] = (zones >>> 8) & 0xFF;
+                    }
+                    effect[3] = (7 & 0x07) | ((3 & 0x07) << 3);
+                    effect[4] = 25;
+                    effect[5] = 4;
+                    break;
+
                 case 'Rifle / Bow & Arrow':
+                    // Unofficial Bow effect: increasing resistance followed
+                    // by a snap-back force.
                     effect[0] = 0x22;
-                    effect[1] = 2;
-                    effect[2] = 6;
-                    effect[3] = 4;
+                    {
+                        const zones = (1 << 1) | (1 << 8);
+                        effect[1] = zones & 0xFF;
+                        effect[2] = (zones >>> 8) & 0xFF;
+                        const forcePair = ((6 - 1) & 0x07) | (((6 - 1) & 0x07) << 3);
+                        effect[3] = forcePair & 0xFF;
+                        effect[4] = (forcePair >>> 8) & 0xFF;
+                    }
                     break;
+
                 case 'Choppy':
-                    effect[0] = 0x26;
-                    effect[1] = 2;
-                    effect[2] = 7;
-                    effect[3] = 18;
+                    // Community preset: the reverse-engineered sparse
+                    // feedback pattern used by reWASD-style implementations.
+                    effect[0] = 0x21;
+                    effect[1] = 0x02;
+                    effect[2] = 0x27;
+                    effect[3] = 0x18;
+                    effect[4] = 0x00;
+                    effect[5] = 0x00;
+                    effect[6] = 0x00;
                     break;
+
                 case 'Soft':
-                    effect[0] = 0x21;
-                    effect[1] = 0;
-                    effect[2] = 3;
+                    this.setTriggerFeedback(effect, 0, 2);
                     break;
+
                 case 'Medium':
-                    effect[0] = 0x21;
-                    effect[1] = 0;
-                    effect[2] = 5;
+                    this.setTriggerFeedback(effect, 0, 4);
                     break;
+
                 case 'Max':
-                    effect[0] = 0x21;
-                    effect[1] = 0;
-                    effect[2] = 8;
+                    this.setTriggerFeedback(effect, 0, 8);
                     break;
+
                 case 'Pulse / Tension Guard':
-                    effect[0] = 0x25;
-                    effect[1] = (1 << 0) | (1 << 2);
-                    effect[2] = 7;
+                    // A short weapon-style resistance window.
+                    this.setTriggerWeapon(effect, 2, 4, 7);
                     break;
+
                 case 'Rumble Transmission':
-                    effect[0] = 0x26;
-                    effect[1] = 0;
-                    effect[2] = 6;
-                    effect[3] = 30;
+                    // Trigger vibration is the HID representation that
+                    // transmits a repeating actuator pulse through the trigger.
+                    this.setTriggerVibration(effect, 0, 5, 30);
                     break;
+
                 case 'Calibration':
-                    effect[0] = 0xFC;
+                    // 0xFC is a debug/calibration command and is explicitly
+                    // unsafe on some firmware. Do not send it from a browser;
+                    // leave the trigger in a known neutral state instead.
+                    effect[0] = 0x05;
+                    break;
+
+                default:
+                    effect[0] = 0x05;
                     break;
             }
 
-            return this.sendDualSenseOutput(common => {
-                const offset = trigger === 'R' ? 10 : 20;
-                common[0] |= trigger === 'R' ? 0x04 : 0x08;
-                for (let i = 0; i < effect.length; i++) {
-                    common[offset + i] = effect[i];
-                }
-            });
+            return this.sendDualSenseTriggerOutput(trigger, effect);
         }
+
+        async sendDualSenseTriggerOutput(trigger, effect) {
+            if (!this.dualSenseConnected()) return false;
+
+            try {
+                let reportId;
+                let data;
+                let common;
+
+                if (this.dualSenseConnection === 'bluetooth') {
+                    reportId = 0x31;
+                    data = new Uint8Array(77);
+                    data[0] = (this.dualSenseSequence & 0x0F) << 4;
+                    data[1] = 0x10;
+                    this.dualSenseSequence = (this.dualSenseSequence + 1) & 0x0F;
+                    common = data.subarray(2, 49);
+                } else {
+                    reportId = 0x02;
+                    data = new Uint8Array(47);
+                    common = data;
+                }
+
+                // IMPORTANT: adaptive-trigger output must not enable the
+                // compatibility-rumble bits in valid_flag0. Those bits can
+                // route the controller into the old vibration path and prevent
+                // the adaptive trigger actuators from responding.
+                common[0] = trigger === 'R' ? 0x04 : 0x08;
+
+                const offset = trigger === 'R' ? 10 : 20;
+                for (let i = 0; i < 10; i++) {
+                    common[offset + i] = effect[i] || 0;
+                }
+
+                if (this.dualSenseConnection === 'bluetooth') {
+                    this.fillBluetoothChecksum(reportId, data);
+                }
+
+                await this.dualSenseHid.sendReport(reportId, data);
+                return true;
+            } catch (_) {
+                return false;
+            }
+        }
+
 
     }
 
