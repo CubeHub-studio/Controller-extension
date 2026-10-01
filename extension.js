@@ -959,9 +959,6 @@
                 case 'Galloping':
                     this.setTriggerGalloping(effect, 0, 9, 2, 5, 2);
                     break;
-                case 'Pistol / Semi-Automatic':
-                    this.setTriggerWeapon(effect, 2, 7, 6);
-                    break;
                 case 'Rifle / Bow & Arrow':
                     effect[0] = 0x26;
                     effect[1] = 0x00;
