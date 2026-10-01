@@ -389,6 +389,7 @@
                         'Max',
                         'Pulse / Tension Guard',
                         'Rumble Transmission',
+                        'Lock up',
                         'Calibration'
                     ]
                 }
@@ -902,6 +903,7 @@
                 'Max': 0x21,
                 'Pulse / Tension Guard': 0x25,
                 'Rumble Transmission': 0x26,
+                'Lock up': 0x21,
                 'Calibration': 0x05
             };
             return Object.prototype.hasOwnProperty.call(modes, mode) ? modes[mode] : 0x05;
@@ -994,6 +996,12 @@
                     break;
                 case 'Rumble Transmission':
                     this.setTriggerVibration(effect, 0, 5, 30);
+                    break;
+                case 'Lock up':
+                    // Maximum continuous resistance starting immediately.
+                    // This creates a firm virtual wall; it cannot physically
+                    // prevent the trigger from moving all the way down.
+                    this.setTriggerFeedback(effect, 0, 8);
                     break;
                 case 'Calibration':
                     effect[0] = 0x05;
