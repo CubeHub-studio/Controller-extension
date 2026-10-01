@@ -998,10 +998,11 @@
                     this.setTriggerVibration(effect, 0, 5, 30);
                     break;
                 case 'Lock up':
-                    // Maximum resistance beginning at ~20% trigger travel.
-                    // This creates the physical trigger-stop / jam sensation.
+                    // Maximum resistance beginning at ~10% trigger travel.
+                    // The early resistance creates a short, jam-like trigger stop
+                    // rather than making the whole trigger feel heavily resisted.
                     // The geared actuator can yield under extreme force by design.
-                    this.setTriggerFeedback(effect, 2, 8);
+                    this.setTriggerFeedback(effect, 1, 8);
                     break;
                 case 'Calibration':
                     effect[0] = 0x05;
