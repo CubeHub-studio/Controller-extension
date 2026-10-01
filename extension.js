@@ -335,6 +335,16 @@
                         opcode: 'setDualSenseLightOff',
                         blockType: Scratch.BlockType.COMMAND,
                         text: 'turn DualSense light off'
+                    },
+                    {
+                        opcode: 'setAdaptiveTriggerMode',
+                        blockType: Scratch.BlockType.COMMAND,
+                        text: 'Adaptive trigger mode controller [CONTROLLER] trigger [TRIGGER] set [MODE]',
+                        arguments: {
+                            CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 },
+                            TRIGGER: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggers', defaultValue: 'L' },
+                            MODE: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggerModes', defaultValue: 'Off' }
+                        }
                     }
                 ],
 
@@ -358,7 +368,18 @@
                         ]
                     },
                     sticks: ['Left stick', 'Right stick'],
-                    directions: ['X', 'Y']
+                    directions: ['X', 'Y'],
+                    adaptiveTriggers: ['L', 'R'],
+                    adaptiveTriggerModes: [
+                        'Off',
+                        'Feedback',
+                        'Weapon',
+                        'Vibration',
+                        'Bow',
+                        'Galloping',
+                        'Machine',
+                        'Calibration'
+                    ]
                 }
             };
         }
@@ -579,12 +600,8 @@
             data[data.length - 1] = (crc >>> 24) & 0xFF;
         }
 
-        async setDualSenseLight(args) {
+        async sendDualSenseOutput(configure) {
             if (!this.dualSenseConnected()) return false;
-
-            const r = this.clampByte(args.RED);
-            const g = this.clampByte(args.GREEN);
-            const b = this.clampByte(args.BLUE);
 
             try {
                 let reportId;
@@ -594,13 +611,9 @@
                 if (this.dualSenseConnection === 'bluetooth') {
                     reportId = 0x31;
                     data = new Uint8Array(77);
-
-                    // Bluetooth header.
                     data[0] = (this.dualSenseSequence & 0x0F) << 4;
                     data[1] = 0x10;
-                    this.dualSenseSequence =
-                        (this.dualSenseSequence + 1) & 0x0F;
-
+                    this.dualSenseSequence = (this.dualSenseSequence + 1) & 0x0F;
                     common = data.subarray(2, 49);
                 } else {
                     reportId = 0x02;
@@ -608,15 +621,9 @@
                     common = data;
                 }
 
-                // DualSense common output report.
-                common[0] = 0xFF; // valid vibration/haptics flags
-                common[1] = 0xF7; // enable LED/player LED controls
-                common[39] = 0x02; // lightbar setup control
-                common[41] = 0x02; // enable lightbar
-                common[43] = 0x00; // player LEDs
-                common[44] = r;
-                common[45] = g;
-                common[46] = b;
+                // Keep the complete common report zeroed except for fields we set.
+                common[0] = 0xFF; // valid haptics/compatibility flags
+                configure(common);
 
                 if (this.dualSenseConnection === 'bluetooth') {
                     this.fillBluetoothChecksum(reportId, data);
@@ -629,11 +636,112 @@
             }
         }
 
+        async setDualSenseLight(args) {
+            if (!this.dualSenseConnected()) return false;
+
+            const r = this.clampByte(args.RED);
+            const g = this.clampByte(args.GREEN);
+            const b = this.clampByte(args.BLUE);
+
+            // The DualSense common output report puts lightbar RGB at offsets
+            // 44, 45, 46. The previous implementation used offsets from an
+            // older/incomplete report layout, which is why Chrome could pair
+            // with the controller but the LEDs did not change.
+            return this.sendDualSenseOutput(common => {
+                common[1] |= 0x04; // LIGHTBAR_CONTROL_ENABLE
+                common[38] |= 0x02; // LIGHTBAR_SETUP_CONTROL_ENABLE
+                common[41] = 0x01; // LIGHT_ON
+                common[42] = 0x00; // brightness: full/default
+                common[44] = r;
+                common[45] = g;
+                common[46] = b;
+            });
+        }
+
         async setDualSenseLightOff() {
-            return this.setDualSenseLight({
-                RED: 0,
-                GREEN: 0,
-                BLUE: 0
+            if (!this.dualSenseConnected()) return false;
+
+            return this.sendDualSenseOutput(common => {
+                common[38] |= 0x02; // LIGHTBAR_SETUP_CONTROL_ENABLE
+                common[41] = 0x02; // LIGHT_OUT
+            });
+        }
+
+        adaptiveTriggerMode(mode) {
+            const modes = {
+                'Off': 0x05,
+                'Feedback': 0x21,
+                'Weapon': 0x25,
+                'Vibration': 0x26,
+                'Bow': 0x22,
+                'Galloping': 0x23,
+                'Machine': 0x27,
+                'Calibration': 0xFC
+            };
+            return Object.prototype.hasOwnProperty.call(modes, mode) ? modes[mode] : 0x05;
+        }
+
+        async setAdaptiveTriggerMode(args) {
+            if (!this.dualSenseConnected()) return false;
+
+            const trigger = String(args.TRIGGER || 'L').toUpperCase() === 'R' ? 'R' : 'L';
+            const modeName = String(args.MODE || 'Off');
+            const mode = this.adaptiveTriggerMode(modeName);
+
+            // Presets use safe, conservative parameters so the block can be
+            // used without requiring ten extra parameter inputs. The protocol
+            // supports richer parameterized effects, but these presets make
+            // each named mode immediately useful.
+            const effect = new Uint8Array(11);
+            effect[0] = mode;
+
+            switch (modeName) {
+                case 'Feedback':
+                    effect[1] = 3;   // start position
+                    effect[2] = 6;   // force
+                    break;
+                case 'Weapon':
+                    effect[1] = 2;   // start zone mask bit 2
+                    effect[2] = 0x02;
+                    effect[3] = 6;   // strength
+                    break;
+                case 'Vibration':
+                    effect[1] = 0xFF;
+                    effect[2] = 0x03; // active zones + amplitude bits
+                    effect[9] = 30;    // frequency
+                    break;
+                case 'Bow':
+                    effect[1] = 0x02;
+                    effect[2] = 0x01;
+                    effect[3] = (6 & 0x07) | ((4 & 0x07) << 3);
+                    break;
+                case 'Galloping':
+                    effect[1] = 0x02;
+                    effect[2] = 0x02;
+                    effect[3] = (2 & 0x07) | ((4 & 0x07) << 3);
+                    effect[4] = 8;
+                    break;
+                case 'Machine':
+                    effect[1] = 0x02;
+                    effect[2] = 0x02;
+                    effect[3] = (6 & 0x07) | ((2 & 0x07) << 3);
+                    effect[4] = 30;
+                    effect[5] = 5;
+                    break;
+                case 'Calibration':
+                    // Calibration is a controller firmware operation. No
+                    // additional parameters are required.
+                    break;
+                case 'Off':
+                default:
+                    break;
+            }
+
+            return this.sendDualSenseOutput(common => {
+                // Right trigger effect starts at common offset 10; left at 21.
+                const offset = trigger === 'R' ? 10 : 21;
+                common[1] |= 0x04; // keep lightbar control enabled if it was used
+                for (let i = 0; i < 11; i++) common[offset + i] = effect[i];
             });
         }
     }
