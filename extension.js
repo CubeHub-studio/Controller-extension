@@ -1006,7 +1006,8 @@
                     this.setTriggerFeedback(effect, 0, 8);
                     break;
                 case 'Calibration':
-                    effect[0] = 0x05;
+                    // Original first-version calibration command.
+                    effect[0] = 0xFC;
                     break;
                 default:
                     effect[0] = 0x05;
