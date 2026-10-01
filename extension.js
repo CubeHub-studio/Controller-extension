@@ -1035,7 +1035,14 @@
                 // the adaptive trigger actuators from responding.
                 common[0] = trigger === 'R' ? 0x04 : 0x08;
 
-                const offset = trigger === 'R' ? 10 : 20;
+                // WebHID strips the report ID from event data, and our Bluetooth
+                // output buffer begins at the sequence byte. The DualSense
+                // Bluetooth trigger fields are at common[10..19] (R2) and
+                // common[23..32] (L2). USB uses common[10..19] and
+                // common[21..30].
+                const offset = trigger === 'R'
+                    ? 10
+                    : (this.dualSenseConnection === 'bluetooth' ? 23 : 21);
                 for (let i = 0; i < 10; i++) {
                     common[offset + i] = effect[i] || 0;
                 }
