@@ -491,15 +491,6 @@
         }
 
         async rumble(args) {
-            const p = this.getPad(args.CONTROLLER);
-            if (!p) return;
-
-            const actuator =
-                p.vibrationActuator ||
-                (Array.isArray(p.hapticActuators) ? p.hapticActuators[0] : null);
-
-            if (!actuator) return;
-
             const duration = Math.max(
                 0,
                 Math.min(10000, Number(args.DURATION) * 1000 || 0)
@@ -508,6 +499,31 @@
                 0,
                 Math.min(1, Number(args.STRENGTH))
             );
+
+            // DualSense rumble is sent through its vendor HID output report.
+            // This is more reliable than the Gamepad API, especially over
+            // Bluetooth where Chromium may expose no vibrationActuator.
+            if (await this.requireDualSenseHidForTriggers()) {
+                await this.sendDualSenseRumble(strength, duration);
+
+                // Stop the motors after the requested duration.
+                if (duration > 0) {
+                    setTimeout(() => {
+                        this.sendDualSenseRumble(0, 0);
+                    }, duration);
+                }
+                return;
+            }
+
+            // Generic fallback for non-DualSense controllers.
+            const p = this.getPad(args.CONTROLLER);
+            if (!p) return;
+
+            const actuator =
+                p.vibrationActuator ||
+                (Array.isArray(p.hapticActuators) ? p.hapticActuators[0] : null);
+
+            if (!actuator) return;
 
             try {
                 if (
@@ -644,8 +660,11 @@
                     common = data;
                 }
 
-                // Keep the complete common report zeroed except for fields we set.
-                common[0] = 0xFF; // valid haptics/compatibility flags
+                // Each output feature has its own valid flag. Do not set 0xFF
+                // globally: that can make an unrelated output command (such as
+                // lightbar-only) also touch rumble/haptics state.
+                common[0] = 0x00;
+                common[1] = 0x00;
                 configure(common);
 
                 if (this.dualSenseConnection === 'bluetooth') {
@@ -666,15 +685,13 @@
             const g = this.clampByte(args.GREEN);
             const b = this.clampByte(args.BLUE);
 
-            // The DualSense common output report puts lightbar RGB at offsets
-            // 44, 45, 46. The previous implementation used offsets from an
-            // older/incomplete report layout, which is why Chrome could pair
-            // with the controller but the LEDs did not change.
             return this.sendDualSenseOutput(common => {
-                common[1] |= 0x04; // LIGHTBAR_CONTROL_ENABLE
-                common[38] |= 0x02; // LIGHTBAR_SETUP_CONTROL_ENABLE
-                common[41] = 0x01; // LIGHT_ON
-                common[42] = 0x00; // brightness: full/default
+                // valid_flag1 bit 2 = LIGHTBAR_CONTROL_ENABLE.
+                common[1] = 0x04;
+
+                // Turn the lightbar on and provide the new RGB values.
+                common[41] = 0x01;
+                common[42] = 0x00;
                 common[44] = r;
                 common[45] = g;
                 common[46] = b;
@@ -685,8 +702,26 @@
             if (!this.dualSenseConnected()) return false;
 
             return this.sendDualSenseOutput(common => {
-                common[38] |= 0x02; // LIGHTBAR_SETUP_CONTROL_ENABLE
-                common[41] = 0x02; // LIGHT_OUT
+                common[1] = 0x04;
+                common[41] = 0x02;
+            });
+        }
+
+        async sendDualSenseRumble(strength, duration) {
+            if (!this.dualSenseConnected()) return false;
+
+            strength = Math.max(0, Math.min(1, Number(strength) || 0));
+            duration = Math.max(0, Math.min(10000, Number(duration) || 0));
+
+            const motor = Math.round(strength * 255);
+
+            // DualSense classic rumble uses the HID output report directly:
+            // valid_flag0 bit 0 enables compatible vibration, bit 1 selects
+            // haptics/rumble, then right/left motor amplitudes follow.
+            return this.sendDualSenseOutput(common => {
+                common[0] = 0x03;
+                common[2] = motor;
+                common[3] = motor;
             });
         }
 
