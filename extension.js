@@ -26,6 +26,8 @@
             this.dualSenseHid = null;
             this.dualSenseConnection = null;
             this.dualSenseSequence = 0;
+            this.dualSenseLightColor = [255, 0, 0];
+            this.dualSenseLightBrightness = 255;
 
             window.addEventListener('gamepadconnected', e => {
                 // Do not write input state here. The polling loop owns state
@@ -324,17 +326,42 @@
                     {
                         opcode: 'setDualSenseLight',
                         blockType: Scratch.BlockType.COMMAND,
-                        text: 'set DualSense light R [RED] G [GREEN] B [BLUE]',
+                        text: 'set DualSense light R [RED] G [GREEN] B [BLUE] [TRANSITION]',
                         arguments: {
                             RED: { type: Scratch.ArgumentType.NUMBER, defaultValue: 255 },
                             GREEN: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 },
-                            BLUE: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }
+                            BLUE: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 },
+                            TRANSITION: {
+                                type: Scratch.ArgumentType.STRING,
+                                menu: 'lightTransition',
+                                defaultValue: 'Instant'
+                            }
+                        }
+                    },
+                    {
+                        opcode: 'setDualSenseLightBrightness',
+                        blockType: Scratch.BlockType.COMMAND,
+                        text: 'DualSense light brightness [BRIGHTNESS] [TRANSITION]',
+                        arguments: {
+                            BRIGHTNESS: { type: Scratch.ArgumentType.NUMBER, defaultValue: 255 },
+                            TRANSITION: {
+                                type: Scratch.ArgumentType.STRING,
+                                menu: 'lightTransition',
+                                defaultValue: 'Instant'
+                            }
                         }
                     },
                     {
                         opcode: 'setDualSenseLightOff',
                         blockType: Scratch.BlockType.COMMAND,
-                        text: 'turn DualSense light off'
+                        text: 'turn DualSense light off [TRANSITION]',
+                        arguments: {
+                            TRANSITION: {
+                                type: Scratch.ArgumentType.STRING,
+                                menu: 'lightTransition',
+                                defaultValue: 'Instant'
+                            }
+                        }
                     },
                     {
                         opcode: 'customAdaptiveTriggerEffect',
@@ -381,6 +408,7 @@
                     sticks: ['Left stick', 'Right stick'],
                     directions: ['X', 'Y'],
                     adaptiveTriggers: ['L', 'R'],
+                    lightTransition: ['Fade', 'Instant'],
                     adaptiveTriggerModes: [
                         'Off',
                         'Feedback',
@@ -678,33 +706,91 @@
             }
         }
 
-        async setDualSenseLight(args) {
+        async setDualSenseLightColor(r, g, b, transition) {
             if (!this.dualSenseConnected()) return false;
 
+            r = this.clampByte(r);
+            g = this.clampByte(g);
+            b = this.clampByte(b);
+
+            const start = this.dualSenseLightColor.slice();
+            const mode = String(transition || 'Instant');
+            const steps = mode === 'Fade' ? 10 : 1;
+
+            for (let i = 1; i <= steps; i++) {
+                const t = i / steps;
+                const cr = Math.round(start[0] + (r - start[0]) * t);
+                const cg = Math.round(start[1] + (g - start[1]) * t);
+                const cb = Math.round(start[2] + (b - start[2]) * t);
+
+                const ok = await this.sendDualSenseOutput(common => {
+                    // valid_flag1 bit 2 = LIGHTBAR_CONTROL_ENABLE.
+                    common[1] = 0x04;
+                    common[44] = cr;
+                    common[45] = cg;
+                    common[46] = cb;
+                });
+                if (!ok) return false;
+
+                if (steps > 1 && i < steps) {
+                    await new Promise(resolve => setTimeout(resolve, 30));
+                }
+            }
+
+            this.dualSenseLightColor = [r, g, b];
+            return true;
+        }
+
+        async setDualSenseLight(args) {
             const r = this.clampByte(args.RED);
             const g = this.clampByte(args.GREEN);
             const b = this.clampByte(args.BLUE);
 
-            return this.sendDualSenseOutput(common => {
-                // valid_flag1 bit 2 = LIGHTBAR_CONTROL_ENABLE.
-                common[1] = 0x04;
-
-                // Turn the lightbar on and provide the new RGB values.
-                common[41] = 0x01;
-                common[42] = 0x00;
-                common[44] = r;
-                common[45] = g;
-                common[46] = b;
-            });
+            this.dualSenseLightBrightness = 255;
+            return this.setDualSenseLightColor(r, g, b, args.TRANSITION);
         }
 
-        async setDualSenseLightOff() {
+        async setDualSenseLightBrightness(args) {
             if (!this.dualSenseConnected()) return false;
 
-            return this.sendDualSenseOutput(common => {
-                common[1] = 0x04;
-                common[41] = 0x02;
-            });
+            const brightness = Math.max(0, Math.min(255, Math.floor(Number(args.BRIGHTNESS) || 0)));
+            this.dualSenseLightBrightness = brightness;
+
+            const base = this.dualSenseLightColor.slice();
+            const r = Math.round(base[0] * brightness / 255);
+            const g = Math.round(base[1] * brightness / 255);
+            const b = Math.round(base[2] * brightness / 255);
+
+            return this.setDualSenseLightColor(r, g, b, args.TRANSITION);
+        }
+
+        async setDualSenseLightOff(args) {
+            if (!this.dualSenseConnected()) return false;
+
+            const mode = String(args && args.TRANSITION || 'Instant');
+            const start = this.dualSenseLightColor.slice();
+            const steps = mode === 'Fade' ? 10 : 1;
+
+            for (let i = 1; i <= steps; i++) {
+                const t = i / steps;
+                const r = Math.round(start[0] * (1 - t));
+                const g = Math.round(start[1] * (1 - t));
+                const b = Math.round(start[2] * (1 - t));
+
+                const ok = await this.sendDualSenseOutput(common => {
+                    common[1] = 0x04;
+                    common[44] = r;
+                    common[45] = g;
+                    common[46] = b;
+                });
+                if (!ok) return false;
+
+                if (steps > 1 && i < steps) {
+                    await new Promise(resolve => setTimeout(resolve, 30));
+                }
+            }
+
+            return true;
         }
 
         async sendDualSenseRumble(strength, duration) {
