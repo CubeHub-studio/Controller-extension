@@ -29,6 +29,16 @@
             this.dualSenseLightColor = [255, 0, 0];
             this.dualSenseLightBrightness = 255;
 
+            // Raw DualSense input state. This is used when Chrome exposes the
+            // controller through WebHID but does not expose it through the
+            // Gamepad API (which can happen when WebHID owns the device).
+            this.dualSenseRawButtons = new Array(18).fill(false);
+            this.dualSenseRawPreviousButtons = new Array(18).fill(false);
+            this.dualSenseRawAxes = [0, 0, 0, 0];
+            this.dualSenseInputListener = null;
+            this.dualSenseSyntheticIndex = 1000;
+            this.dualSenseInputSeen = false;
+
             window.addEventListener('gamepadconnected', e => {
                 // Do not write input state here. The polling loop owns state
                 // transitions, preventing a connect event from making a button
@@ -101,7 +111,36 @@
         }
 
         getPads() {
-            return Array.from(this.gamepads.values()).sort((a, b) => a.index - b.index);
+            const pads = Array.from(this.gamepads.values())
+                .sort((a, b) => a.index - b.index);
+
+            // If WebHID has a DualSense open but the browser did not expose it
+            // through navigator.getGamepads(), expose a synthetic gamepad to
+            // the rest of the extension. This keeps the existing controller
+            // blocks working instead of making HID-only DualSense a separate
+            // controller system.
+            const hasDualSenseGamepad = pads.some(p => this.controllerType(p) === 'PlayStation');
+
+            if (
+                !hasDualSenseGamepad &&
+                this.dualSenseConnected()
+            ) {
+                pads.push({
+                    id: 'Sony Interactive Entertainment Wireless Controller (WebHID)',
+                    index: this.dualSenseSyntheticIndex,
+                    connected: true,
+                    mapping: 'standard',
+                    buttons: this.dualSenseRawButtons.map(pressed => ({
+                        pressed: !!pressed,
+                        value: pressed ? 1 : 0
+                    })),
+                    axes: this.dualSenseRawAxes.slice(),
+                    hapticActuators: [],
+                    vibrationActuator: null
+                });
+            }
+
+            return pads.sort((a, b) => a.index - b.index);
         }
 
         getPad(which) {
@@ -454,30 +493,176 @@
         }
 
         async searchForNewControllers() {
-            // Refresh the currently visible Gamepad API controllers.
+            // Gamepad API devices become visible after the page receives
+            // controller activity, so refresh the live list immediately.
             this.poll();
+
+            // Also reconnect any previously-authorized Sony HID controller.
+            // getDevices() does not show a permission dialog, so this is safe
+            // to run from a normal Scratch command.
             if ('hid' in navigator) {
                 try {
-                    await navigator.hid.getDevices();
+                    const devices = await navigator.hid.getDevices();
+                    const device = devices.find(d =>
+                        d.vendorId === 0x054c &&
+                        (d.productId === 0x0ce6 || d.productId === 0x0df2)
+                    );
+
+                    if (device) {
+                        if (!device.opened) await device.open();
+                        this.setDualSenseHidDevice(device);
+                    }
                 } catch (_) {}
             }
+
+            this.poll();
         }
 
         async requestHID() {
             if (!('hid' in navigator)) return false;
+
             try {
+                // WebHID requestDevice() requires a user gesture. The Scratch
+                // command itself must therefore be run by the user.
                 const devices = await navigator.hid.requestDevice({
                     filters: [{ vendorId: 0x054c }]
                 });
                 const device = devices && devices[0];
+
                 if (!device) return false;
                 if (!device.opened) await device.open();
-                this.dualSenseHid = device;
-                this.dualSenseConnection = this.detectDualSenseTransport(device);
+
+                this.setDualSenseHidDevice(device);
                 return true;
             } catch (_) {
                 return false;
             }
+        }
+
+        setDualSenseHidDevice(device) {
+            if (
+                !device ||
+                device.vendorId !== 0x054c ||
+                (device.productId !== 0x0ce6 && device.productId !== 0x0df2)
+            ) {
+                return false;
+            }
+
+            if (this.dualSenseHid && this.dualSenseInputListener) {
+                try {
+                    this.dualSenseHid.removeEventListener(
+                        'inputreport',
+                        this.dualSenseInputListener
+                    );
+                } catch (_) {}
+            }
+
+            this.dualSenseHid = device;
+            this.dualSenseConnection = this.detectDualSenseTransport(device);
+            this.dualSenseInputSeen = false;
+
+            this.dualSenseInputListener = event => {
+                this.handleDualSenseInputReport(event);
+            };
+
+            device.addEventListener('inputreport', this.dualSenseInputListener);
+            return true;
+        }
+
+        handleDualSenseInputReport(event) {
+            if (!event || event.device !== this.dualSenseHid) return;
+
+            const data = event.data;
+            if (!data || data.byteLength < 7) return;
+
+            const reportId = Number(event.reportId);
+            let buttons0;
+            let buttons1;
+            let buttons2;
+            let axes;
+
+            // WebHID's event.data excludes the HID report ID.
+            //
+            // USB report 0x01:
+            //   axes 0..5 = bytes 0..5
+            //   buttons   = bytes 7..9
+            //
+            // Bluetooth report 0x31:
+            //   axes      = bytes 1..6
+            //   buttons   = bytes 8..10
+            //
+            // Bluetooth also has a compact report 0x01 with buttons at
+            // bytes 4..6 and axes at bytes 0..3,7..8.
+            if (reportId === 0x01 && data.byteLength >= 63) {
+                axes = [
+                    (data.getUint8(0) / 127.5) - 1,
+                    (data.getUint8(1) / 127.5) - 1,
+                    (data.getUint8(2) / 127.5) - 1,
+                    (data.getUint8(3) / 127.5) - 1
+                ];
+                buttons0 = data.getUint8(7);
+                buttons1 = data.getUint8(8);
+                buttons2 = data.getUint8(9);
+            } else if (reportId === 0x31 && data.byteLength >= 77) {
+                axes = [
+                    (data.getUint8(1) / 127.5) - 1,
+                    (data.getUint8(2) / 127.5) - 1,
+                    (data.getUint8(3) / 127.5) - 1,
+                    (data.getUint8(4) / 127.5) - 1
+                ];
+                buttons0 = data.getUint8(8);
+                buttons1 = data.getUint8(9);
+                buttons2 = data.getUint8(10);
+            } else if (reportId === 0x01 && data.byteLength >= 9) {
+                axes = [
+                    (data.getUint8(0) / 127.5) - 1,
+                    (data.getUint8(1) / 127.5) - 1,
+                    (data.getUint8(2) / 127.5) - 1,
+                    (data.getUint8(3) / 127.5) - 1
+                ];
+                buttons0 = data.getUint8(4);
+                buttons1 = data.getUint8(5);
+                buttons2 = data.getUint8(6);
+            } else {
+                return;
+            }
+
+            const dpad = buttons0 & 0x0F;
+            const next = [
+                !!(buttons0 & 0x20), // Cross
+                !!(buttons0 & 0x40), // Circle
+                !!(buttons0 & 0x10), // Square
+                !!(buttons0 & 0x80), // Triangle
+                !!(buttons1 & 0x01), // L1
+                !!(buttons1 & 0x02), // R1
+                !!(buttons1 & 0x04), // L2
+                !!(buttons1 & 0x08), // R2
+                !!(buttons1 & 0x10), // Create / Share
+                !!(buttons1 & 0x20), // Options
+                !!(buttons1 & 0x40), // L3
+                !!(buttons1 & 0x80), // R3
+                dpad === 0 || dpad === 1 || dpad === 7,
+                dpad === 3 || dpad === 4 || dpad === 5,
+                dpad === 5 || dpad === 6 || dpad === 7,
+                dpad === 1 || dpad === 2 || dpad === 3,
+                !!(buttons2 & 0x01), // PS / Guide
+                !!(buttons2 & 0x02)  // Touchpad click
+            ];
+
+            this.dualSenseRawPreviousButtons = this.dualSenseRawButtons.slice();
+            this.dualSenseRawButtons = next;
+            this.dualSenseRawAxes = axes.map(v => Math.max(-1, Math.min(1, v)));
+            this.dualSenseInputSeen = true;
+
+            // Feed the same state maps used by the existing button blocks.
+            this.previousButtons.set(
+                this.dualSenseSyntheticIndex,
+                this.dualSenseRawPreviousButtons.slice()
+            );
+            this.currentButtons.set(
+                this.dualSenseSyntheticIndex,
+                this.dualSenseRawButtons.slice()
+            );
         }
 
         adaptiveTriggerModeNumber(args) {
@@ -666,8 +851,7 @@
 
                 if (!device.opened) await device.open();
 
-                this.dualSenseHid = device;
-                this.dualSenseConnection = this.detectDualSenseTransport(device);
+                this.setDualSenseHidDevice(device);
                 return true;
             } catch (_) {
                 return false;
@@ -907,8 +1091,7 @@
                 if (!device || device.vendorId !== 0x054c) return false;
                 if (!device.opened) await device.open();
 
-                this.dualSenseHid = device;
-                this.dualSenseConnection = this.detectDualSenseTransport(device);
+                this.setDualSenseHidDevice(device);
                 return true;
             } catch (_) {
                 return false;
