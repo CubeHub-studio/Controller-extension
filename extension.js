@@ -35,6 +35,9 @@
             this.dualSenseRawButtons = new Array(18).fill(false);
             this.dualSenseRawPreviousButtons = new Array(18).fill(false);
             this.dualSenseRawAxes = [0, 0, 0, 0];
+            this.dualSenseTouchX = 0;
+            this.dualSenseTouchY = 0;
+            this.dualSenseTouchTouched = false;
             this.dualSenseInputListener = null;
             this.dualSenseSyntheticIndex = 1000;
             this.dualSenseInputSeen = false;
@@ -309,6 +312,30 @@
                         opcode: 'anyButtonPressed',
                         blockType: Scratch.BlockType.BOOLEAN,
                         text: 'controller [CONTROLLER] any button pressed?',
+                        arguments: {
+                            CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }
+                        }
+                    },
+                    {
+                        opcode: 'touchpadX',
+                        blockType: Scratch.BlockType.REPORTER,
+                        text: 'controller [CONTROLLER] Touchpad X',
+                        arguments: {
+                            CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }
+                        }
+                    },
+                    {
+                        opcode: 'touchpadY',
+                        blockType: Scratch.BlockType.REPORTER,
+                        text: 'controller [CONTROLLER] Touchpad Y',
+                        arguments: {
+                            CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }
+                        }
+                    },
+                    {
+                        opcode: 'touchpadTouched',
+                        blockType: Scratch.BlockType.BOOLEAN,
+                        text: 'controller [CONTROLLER] Touchpad touched?',
                         arguments: {
                             CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }
                         }
@@ -649,9 +676,41 @@
                 !!(buttons2 & 0x02)  // Touchpad click
             ];
 
+            // DualSense touchpad: each contact is 4 bytes:
+            // contact/id, X low, X high + Y low, Y high.
+            // The contact's high bit means inactive. Coordinates are
+            // 12-bit values with a 1920x1080 hardware range.
+            const touchOffset = reportId === 0x31 ? 33 : 33;
+            let touchX = 0;
+            let touchY = 0;
+            let touchActive = false;
+
+            if (data.byteLength >= touchOffset + 4) {
+                const contact = data.getUint8(touchOffset);
+                if ((contact & 0x80) === 0) {
+                    touchX =
+                        data.getUint8(touchOffset + 1) |
+                        ((data.getUint8(touchOffset + 2) & 0x0F) << 8);
+                    touchY =
+                        ((data.getUint8(touchOffset + 2) >> 4) & 0x0F) |
+                        (data.getUint8(touchOffset + 3) << 4);
+                    touchActive = true;
+                }
+            }
+
+            // PS is buttons2 bit 0. Touchpad click is buttons2 bit 1.
+            // Keep these values independent from the browser Gamepad API.
+            const psPressed = !!(buttons2 & 0x01);
+            const touchpadClicked = !!(buttons2 & 0x02);
+            next[16] = psPressed;
+            next[17] = touchpadClicked;
+
             this.dualSenseRawPreviousButtons = this.dualSenseRawButtons.slice();
             this.dualSenseRawButtons = next;
             this.dualSenseRawAxes = axes.map(v => Math.max(-1, Math.min(1, v)));
+            this.dualSenseTouchX = touchX;
+            this.dualSenseTouchY = touchY;
+            this.dualSenseTouchTouched = touchActive;
             this.dualSenseInputSeen = true;
 
             // Feed the same state maps used by the existing button blocks.
@@ -756,6 +815,24 @@
             const p = this.getPad(args.CONTROLLER);
             const buttons = p ? (this.currentButtons.get(p.index) || []) : [];
             return buttons.some(Boolean);
+        }
+
+        touchpadX(args) {
+            const p = this.getPad(args.CONTROLLER);
+            if (!p || this.controllerType(p) !== 'PlayStation') return 0;
+            return this.dualSenseTouchX;
+        }
+
+        touchpadY(args) {
+            const p = this.getPad(args.CONTROLLER);
+            if (!p || this.controllerType(p) !== 'PlayStation') return 0;
+            return this.dualSenseTouchY;
+        }
+
+        touchpadTouched(args) {
+            const p = this.getPad(args.CONTROLLER);
+            if (!p || this.controllerType(p) !== 'PlayStation') return false;
+            return this.dualSenseTouchTouched;
         }
 
         axisValue(args) {
