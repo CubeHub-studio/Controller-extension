@@ -482,7 +482,29 @@
 
         adaptiveTriggerModeNumber(args) {
             const number = Math.floor(Number(args.NUMBER));
-            return number >= 1 && number <= 20 ? number : 0;
+            const modes = [
+                '1. Off',
+                '2. Feedback',
+                '3. Weapon',
+                '4. Vibration',
+                '5. Slope Feedback',
+                '6. Multiple-Position Feedback',
+                '7. Multiple-Position Vibration',
+                '8. GameCube Emulation',
+                '9. Machine Gun / Automatic',
+                '10. Galloping',
+                '11. Pistol / Semi-Automatic',
+                '12. Rifle / Bow & Arrow',
+                '13. Choppy',
+                '14. Soft',
+                '15. Medium',
+                '16. Max',
+                '17. Pulse / Tension Guard',
+                '18. Rumble Transmission',
+                '19. Lock up',
+                '20. Calibration (MAY ALTER REAL CALIBRATION!)'
+            ];
+            return number >= 1 && number <= modes.length ? modes[number - 1] : '';
         }
 
         controllerCount() {
