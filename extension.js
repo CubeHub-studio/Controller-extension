@@ -380,6 +380,7 @@
                         'Multiple-Position Vibration',
                         'GameCube Emulation',
                         'Machine Gun / Automatic',
+                        'Galloping',
                         'Pistol / Semi-Automatic',
                         'Rifle / Bow & Arrow',
                         'Choppy',
@@ -746,18 +747,56 @@
             start = Math.max(2, Math.min(7, Math.floor(start)));
             end = Math.max(start + 1, Math.min(8, Math.floor(end)));
             strength = Math.max(0, Math.min(8, Math.floor(strength)));
-
             effect.fill(0);
-            if (strength <= 0) {
-                effect[0] = 0x05;
-                return;
-            }
-
+            if (strength <= 0) { effect[0] = 0x05; return; }
             const zones = (1 << start) | (1 << end);
             effect[0] = 0x25;
             effect[1] = zones & 0xFF;
             effect[2] = (zones >>> 8) & 0xFF;
             effect[3] = (strength - 1) & 0x07;
+        }
+
+        setTriggerBow(effect, start, end, strength, snapForce) {
+            start = Math.max(0, Math.min(8, Math.floor(start)));
+            end = Math.max(start + 1, Math.min(8, Math.floor(end)));
+            strength = Math.max(0, Math.min(8, Math.floor(strength)));
+            snapForce = Math.max(0, Math.min(8, Math.floor(snapForce)));
+            effect.fill(0);
+            if (!strength || !snapForce || end <= 0) { effect[0] = 0x05; return; }
+            const zones = (1 << start) | (1 << end);
+            const forcePair = ((strength - 1) & 0x07) | (((snapForce - 1) & 0x07) << 3);
+            effect[0] = 0x22;
+            effect[1] = zones & 0xFF;
+            effect[2] = (zones >>> 8) & 0xFF;
+            effect[3] = forcePair & 0xFF;
+            effect[4] = (forcePair >>> 8) & 0xFF;
+        }
+
+        setTriggerGalloping(effect, start, end, firstFoot, secondFoot, frequency) {
+            start = Math.max(0, Math.min(8, Math.floor(start)));
+            end = Math.max(start + 1, Math.min(9, Math.floor(end)));
+            firstFoot = Math.max(0, Math.min(6, Math.floor(firstFoot)));
+            secondFoot = Math.max(firstFoot + 1, Math.min(7, Math.floor(secondFoot)));
+            frequency = Math.max(1, Math.min(255, Math.floor(frequency)));
+            effect.fill(0);
+            if (end <= start || secondFoot <= firstFoot || frequency <= 0) { effect[0] = 0x05; return; }
+            const zones = (1 << start) | (1 << end);
+            const timeAndRatio = (secondFoot & 7) | ((firstFoot & 7) << 3);
+            effect[0] = 0x23;
+            effect[1] = zones & 0xFF;
+            effect[2] = (zones >>> 8) & 0xFF;
+            effect[3] = timeAndRatio & 0xFF;
+            effect[4] = frequency;
+        }
+
+        setSimpleFeedback(effect, position, strength) {
+            effect.fill(0);
+            position = Math.max(0, Math.min(255, Math.floor(position)));
+            strength = Math.max(0, Math.min(255, Math.floor(strength)));
+            if (!strength) { effect[0] = 0x05; return; }
+            effect[0] = 0x01;
+            effect[1] = position;
+            effect[2] = strength;
         }
 
         setTriggerVibration(effect, position, amplitude, frequency) {
@@ -885,118 +924,88 @@
                 case 'Off':
                     effect[0] = 0x05;
                     break;
-
                 case 'Feedback':
                     this.setTriggerFeedback(effect, 0, 6);
                     break;
-
                 case 'Weapon':
                 case 'Pistol / Semi-Automatic':
                     this.setTriggerWeapon(effect, 2, 7, 6);
                     break;
-
                 case 'Vibration':
                     this.setTriggerVibration(effect, 0, 6, 40);
                     break;
-
-                case 'Slope Feedback': {
-                    // Apple-style slope feedback is represented by the
-                    // official multiple-position feedback effect: a linear
-                    // resistance ramp over all ten trigger zones.
+                case 'Slope Feedback':
                     this.setTriggerMultipleFeedback(effect, [1, 2, 3, 4, 5, 6, 7, 7, 8, 8]);
                     break;
-                }
-
                 case 'Multiple-Position Feedback':
                     this.setTriggerMultipleFeedback(effect, [2, 2, 4, 4, 6, 6, 8, 8, 5, 5]);
                     break;
-
                 case 'Multiple-Position Vibration':
                     this.setTriggerMultipleVibration(effect, [2, 4, 6, 8, 6, 4, 2, 4, 6, 8], 35);
                     break;
-
                 case 'GameCube Emulation':
-                    // GameCube-style triggers have a firm stop followed by a
-                    // strong final section. This uses the safe official
-                    // feedback encoding rather than an undocumented debug mode.
-                    this.setTriggerMultipleFeedback(effect, [0, 0, 0, 4, 6, 8, 8, 8, 8, 8]);
+                    this.setSimpleFeedback(effect, 0x55, 0x64);
                     break;
-
-                case 'Machine Gun / Automatic':
-                    // Nielk1's Machine effect: alternating amplitudes with a
-                    // controllable frequency/period. This is firmware mode 0x27.
+                case 'Machine Gun / Automatic': {
+                    const zones = (1 << 1) | (1 << 9);
+                    const amplitudePair = (2 & 7) | ((7 & 7) << 3);
                     effect[0] = 0x27;
-                    {
-                        const zones = (1 << 1) | (1 << 9);
-                        effect[1] = zones & 0xFF;
-                        effect[2] = (zones >>> 8) & 0xFF;
-                    }
-                    effect[3] = (7 & 0x07) | ((3 & 0x07) << 3);
-                    effect[4] = 25;
-                    effect[5] = 4;
+                    effect[1] = zones & 0xFF;
+                    effect[2] = (zones >>> 8) & 0xFF;
+                    effect[3] = amplitudePair;
+                    effect[4] = 18;
+                    effect[5] = 2;
                     break;
-
+                }
+                case 'Galloping':
+                    this.setTriggerGalloping(effect, 0, 9, 2, 5, 2);
+                    break;
+                case 'Pistol / Semi-Automatic':
+                    this.setTriggerWeapon(effect, 2, 7, 6);
+                    break;
                 case 'Rifle / Bow & Arrow':
-                    // Unofficial Bow effect: increasing resistance followed
-                    // by a snap-back force.
-                    effect[0] = 0x22;
-                    {
-                        const zones = (1 << 1) | (1 << 8);
-                        effect[1] = zones & 0xFF;
-                        effect[2] = (zones >>> 8) & 0xFF;
-                        const forcePair = ((6 - 1) & 0x07) | (((6 - 1) & 0x07) << 3);
-                        effect[3] = forcePair & 0xFF;
-                        effect[4] = (forcePair >>> 8) & 0xFF;
-                    }
+                    effect[0] = 0x26;
+                    effect[1] = 0x00;
+                    effect[2] = 0x03;
+                    effect[3] = 0x00;
+                    effect[4] = 0x00;
+                    effect[5] = 0x00;
+                    effect[6] = 0x3F;
+                    effect[7] = 0x00;
+                    effect[8] = 0x00;
+                    effect[9] = 10;
                     break;
-
                 case 'Choppy':
-                    // Community preset: the reverse-engineered sparse
-                    // feedback pattern used by reWASD-style implementations.
                     effect[0] = 0x21;
                     effect[1] = 0x02;
                     effect[2] = 0x27;
                     effect[3] = 0x18;
                     effect[4] = 0x00;
                     effect[5] = 0x00;
-                    effect[6] = 0x00;
+                    effect[6] = 0x26;
                     break;
-
                 case 'Soft':
-                    this.setTriggerFeedback(effect, 0, 2);
+                    this.setSimpleFeedback(effect, 0x00, 0x00);
                     break;
-
                 case 'Medium':
-                    this.setTriggerFeedback(effect, 0, 4);
+                    this.setSimpleFeedback(effect, 0x00, 0x64);
                     break;
-
                 case 'Max':
-                    this.setTriggerFeedback(effect, 0, 8);
+                    this.setSimpleFeedback(effect, 0x00, 0xDC);
                     break;
-
                 case 'Pulse / Tension Guard':
-                    // A short weapon-style resistance window.
-                    this.setTriggerWeapon(effect, 2, 4, 7);
+                    this.setSimpleFeedback(effect, 0x55, 0x64);
                     break;
-
                 case 'Rumble Transmission':
-                    // Trigger vibration is the HID representation that
-                    // transmits a repeating actuator pulse through the trigger.
                     this.setTriggerVibration(effect, 0, 5, 30);
                     break;
-
                 case 'Calibration':
-                    // 0xFC is a debug/calibration command and is explicitly
-                    // unsafe on some firmware. Do not send it from a browser;
-                    // leave the trigger in a known neutral state instead.
                     effect[0] = 0x05;
                     break;
-
                 default:
                     effect[0] = 0x05;
                     break;
             }
-
             return this.sendDualSenseTriggerOutput(trigger, effect);
         }
 
