@@ -126,7 +126,7 @@
                 this.dualSenseConnected()
             ) {
                 pads.push({
-                    id: 'Sony Interactive Entertainment Wireless Controller (WebHID)',
+                    id: '054c Sony Interactive Entertainment Wireless Controller (WebHID)',
                     index: this.dualSenseSyntheticIndex,
                     connected: true,
                     mapping: 'standard',
