@@ -337,6 +337,17 @@
                         text: 'turn DualSense light off'
                     },
                     {
+                        opcode: 'customAdaptiveTriggerEffect',
+                        blockType: Scratch.BlockType.COMMAND,
+                        text: 'Custom adaptive trigger controller [CONTROLLER] trigger [TRIGGER] mode [MODE] parameters [PARAMETERS]',
+                        arguments: {
+                            CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 },
+                            TRIGGER: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggers', defaultValue: 'L' },
+                            MODE: { type: Scratch.ArgumentType.STRING, defaultValue: '0x21' },
+                            PARAMETERS: { type: Scratch.ArgumentType.STRING, defaultValue: '255,255,255,255,255,255,0,0,0,0' }
+                        }
+                    },
+                    {
                         opcode: 'setAdaptiveTriggerMode',
                         blockType: Scratch.BlockType.COMMAND,
                         text: 'Adaptive trigger mode controller [CONTROLLER] trigger [TRIGGER] set [MODE]',
@@ -907,6 +918,41 @@
                 'Calibration': 0x05
             };
             return Object.prototype.hasOwnProperty.call(modes, mode) ? modes[mode] : 0x05;
+        }
+
+
+        async customAdaptiveTriggerEffect(args) {
+            // Raw DualSense adaptive-trigger effect builder.
+            // MODE is byte 0; PARAMETERS supplies bytes 1-10 as a comma-separated
+            // list. This exposes the full 11-byte trigger effect block without
+            // requiring a new Scratch block for every protocol mode.
+            if (!await this.requireDualSenseHidForTriggers()) return false;
+
+            const controller = this.getPad(args.CONTROLLER);
+            if (!controller || this.controllerType(controller) !== 'PlayStation') return false;
+
+            const trigger = String(args.TRIGGER || 'L').toUpperCase() === 'R' ? 'R' : 'L';
+            const parseByte = value => {
+                const text = String(value ?? '').trim();
+                if (!text) return 0;
+                const n = Number(text);
+                if (!Number.isFinite(n)) return 0;
+                return Math.max(0, Math.min(255, Math.floor(n)));
+            };
+
+            const effect = new Uint8Array(10);
+            effect[0] = parseByte(args.MODE);
+
+            const values = String(args.PARAMETERS ?? '')
+                .split(/[,\\s]+/)
+                .filter(Boolean)
+                .slice(0, 9);
+
+            for (let i = 0; i < values.length; i++) {
+                effect[i + 1] = parseByte(values[i]);
+            }
+
+            return this.sendDualSenseTriggerOutput(trigger, effect);
         }
 
         async setAdaptiveTriggerMode(args) {
