@@ -793,7 +793,6 @@
             effect.fill(0);
             position = Math.max(0, Math.min(255, Math.floor(position)));
             strength = Math.max(0, Math.min(255, Math.floor(strength)));
-            if (!strength) { effect[0] = 0x05; return; }
             effect[0] = 0x01;
             effect[1] = position;
             effect[2] = strength;
