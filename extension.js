@@ -208,6 +208,15 @@
                         }
                     },
                     {
+                        opcode: 'buttonName',
+                        blockType: Scratch.BlockType.REPORTER,
+                        text: 'controller [CONTROLLER] button [BUTTON] name',
+                        arguments: {
+                            CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 },
+                            BUTTON: { type: Scratch.ArgumentType.STRING, menu: 'physicalButtons', defaultValue: '1' }
+                        }
+                    },
+                    {
                         opcode: 'controllerMapping',
                         blockType: Scratch.BlockType.REPORTER,
                         text: 'controller [CONTROLLER] mapping',
@@ -330,6 +339,10 @@
                 ],
 
                 menus: {
+                    physicalButtons: {
+                        acceptReporters: true,
+                        items: Array.from({ length: 18 }, (_, i) => String(i + 1))
+                    },
                     buttons: {
                         acceptReporters: true,
                         items: [
@@ -361,6 +374,23 @@
 
         controllerTypeBlock(args) {
             return this.controllerType(this.getPad(args.CONTROLLER));
+        }
+
+        buttonName(args) {
+            const p = this.getPad(args.CONTROLLER);
+            if (!p) return '';
+
+            const i = Math.floor(Number(args.BUTTON) || 1) - 1;
+            if (i < 0 || i >= (p.buttons || []).length) return '';
+
+            const type = this.controllerType(p);
+            const names = type === 'PlayStation'
+                ? ['Cross', 'Circle', 'Square', 'Triangle', 'L1', 'R1', 'L2', 'R2', 'Create / Share', 'Options / Menu', 'L3', 'R3', 'DPad Up', 'DPad Down', 'DPad Left', 'DPad Right', 'PS', 'Touchpad']
+                : type === 'Xbox'
+                ? ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View / Back', 'Menu / Start', 'LS', 'RS', 'DPad Up', 'DPad Down', 'DPad Left', 'DPad Right', 'Xbox Guide', 'Extra']
+                : Array.from({ length: p.buttons.length }, (_, n) => 'Button ' + (n + 1));
+
+            return names[i] || ('Button ' + (i + 1));
         }
 
         controllerMapping(args) {
