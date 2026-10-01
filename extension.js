@@ -390,7 +390,7 @@
                         'Pulse / Tension Guard',
                         'Rumble Transmission',
                         'Lock up',
-                        'Calibration'
+                        'Calibration (MAY ALTER REAL CALIBRATION!)'
                     ]
                 }
             };
@@ -1005,7 +1005,7 @@
                     // available setting to a 5% stop.
                     this.setTriggerFeedback(effect, 0, 8);
                     break;
-                case 'Calibration':
+                case 'Calibration (MAY ALTER REAL CALIBRATION!)':
                     // Original first-version calibration command.
                     effect[0] = 0xFC;
                     break;
