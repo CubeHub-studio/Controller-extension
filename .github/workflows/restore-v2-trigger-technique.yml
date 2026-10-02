@@ -1,0 +1,53 @@
+name: Restore v2 trigger technique
+on:
+  push:
+    paths:
+      - '.github/workflows/restore-v2-trigger-technique.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore v2 adaptive trigger implementation
+        shell: python
+        run: |
+          import urllib.request, re, pathlib
+          old_url='https://raw.githubusercontent.com/CubeHub-studio/Controller-extension/2164a477f87a53a13ca748045c40200e5e715ab6/extension.js'
+          old=urllib.request.urlopen(old_url).read().decode()
+          p=pathlib.Path('extension.js')
+          cur=p.read_text()
+          # The pre-numbered v2 implementation is the section beginning at
+          # writeTriggerFeedback and ending immediately before the class close.
+          old_start=old.index('        writeTriggerFeedback(')
+          old_end=old.rindex('\n    }\n    Scratch.extensions.register')
+          old_region=old[old_start:old_end]
+          old_send_start=old_region.index('        async sendDualSenseTriggerOutput(')
+          old_triggers=old_region[:old_send_start]
+          old_send=old_region[old_send_start:]
+          # Keep the current custom-effect block, but replace its sender with
+          # the exact v2 sender. The old sender is deliberately used because
+          # it sets the R2/L2 motor-enable flag and writes the 10-byte effect
+          # block directly to the raw HID report.
+          cur_start=cur.index('        setTriggerOff(')
+          custom_start=cur.index('        async customAdaptiveTriggerEffect(',cur_start)
+          send_start=cur.index('        async sendDualSenseTriggerOutput(',custom_start)
+          class_end=cur.rindex('\n    }\n    Scratch.extensions.register')
+          custom=cur[custom_start:send_start]
+          replacement=old_triggers+'\n'+custom+'\n'+old_send
+          cur=cur[:cur_start]+replacement+cur[class_end:]
+          # Match the v2 effect storage: ten bytes, not the later 8/11-byte
+          # experimental implementations.
+          cur=cur.replace('r2Effect: new Uint8Array(11)', 'r2Effect: new Uint8Array(10)')
+          cur=cur.replace('l2Effect: new Uint8Array(11)', 'l2Effect: new Uint8Array(10)')
+          p.write_text(cur)
+      - name: Commit patch and remove workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add extension.js
+          git commit -m 'Restore exact pre-numbered DualSense adaptive trigger technique' || true
+          git rm .github/workflows/restore-v2-trigger-technique.yml
+          git commit -m 'Remove temporary trigger restoration workflow'
+          git push
