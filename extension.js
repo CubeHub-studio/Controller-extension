@@ -323,12 +323,12 @@
             if (reportId === 0x01 && this.dualSenseConnection === 'bluetooth' && data.byteLength === 9) {
                 // Bluetooth minimal report 0x01 is only 9 data bytes in WebHID:
                 // sticks 0-3, buttons 4-6, L2/R2 axes 7-8.
-                axes = [(data.getUint8(0)/127.5)-1,(data.getUint8(1)/127.5)-1,(data.getUint8(2)/127.5)-1,(data.getUint8(3)/127.5)-1];
-                buttons0 = data.getUint8(4); buttons1 = data.getUint8(5); buttons2 = data.getUint8(6);
+                axes = [(data.getUint8(1)/127.5)-1,(data.getUint8(2)/127.5)-1,(data.getUint8(3)/127.5)-1,(data.getUint8(4)/127.5)-1];
+                buttons0 = data.getUint8(5); buttons1 = data.getUint8(6); buttons2 = data.getUint8(7);
             } else if (reportId === 0x01 && this.dualSenseConnection === 'usb' && data.byteLength === 63) {
                 // USB report 0x01 is 63 data bytes (report ID is supplied separately).
                 axes = [(data.getUint8(0)/127.5)-1,(data.getUint8(1)/127.5)-1,(data.getUint8(2)/127.5)-1,(data.getUint8(3)/127.5)-1];
-                buttons0 = data.getUint8(7); buttons1 = data.getUint8(8); buttons2 = data.getUint8(9);
+                buttons0 = data.getUint8(8); buttons1 = data.getUint8(9); buttons2 = data.getUint8(10);
             } else if (reportId === 0x31 && this.dualSenseConnection === 'bluetooth' && data.byteLength === 77) {
                 // Bluetooth full report 0x31 is 77 data bytes.
                 axes = [(data.getUint8(1)/127.5)-1,(data.getUint8(2)/127.5)-1,(data.getUint8(3)/127.5)-1,(data.getUint8(4)/127.5)-1];
