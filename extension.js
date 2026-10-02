@@ -460,8 +460,26 @@
             const button = p.buttons && p.buttons[index];
             return Math.round(this.readButtonValue(button) * 255);
         }
-        axisValue(args) { const p=this.getPad(args.CONTROLLER), n=Math.max(1,Math.floor(Number(args.AXIS)||1))-1; return p&&Number.isFinite(p.axes[n])?p.axes[n]:0; }
-        stickValue(args) { const p=this.getPad(args.CONTROLLER); if(!p)return 0; const right=String(args.STICK).toLowerCase().startsWith('right'), y=String(args.DIRECTION).toUpperCase()==='Y', axis=(right?2:0)+(y?1:0); return Number.isFinite(p.axes[axis])?p.axes[axis]:0; }
+        axisValue(args) {
+            const p=this.getPad(args.CONTROLLER);
+            const n=Math.max(1,Math.floor(Number(args.AXIS)||1))-1;
+            if(!p) return 0;
+            if(this.controllerType(p)==='PlayStation' && this.dualSenseInputSeen && Number.isFinite(this.dualSenseRawAxes[n])) {
+                return this.dualSenseRawAxes[n];
+            }
+            return Number.isFinite(p.axes[n]) ? p.axes[n] : 0;
+        }
+        stickValue(args) {
+            const p=this.getPad(args.CONTROLLER);
+            if(!p) return 0;
+            const right=String(args.STICK).toLowerCase().startsWith('right');
+            const y=String(args.DIRECTION).toUpperCase()==='Y';
+            const axis=(right?2:0)+(y?1:0);
+            if(this.controllerType(p)==='PlayStation' && this.dualSenseInputSeen && Number.isFinite(this.dualSenseRawAxes[axis])) {
+                return this.dualSenseRawAxes[axis];
+            }
+            return Number.isFinite(p.axes[axis]) ? p.axes[axis] : 0;
+        }
 
         async rumble(args) {
             const duration=Math.max(0,Math.min(10000,Number(args.DURATION)*1000||0)), strength=Math.max(0,Math.min(1,Number(args.STRENGTH)));
