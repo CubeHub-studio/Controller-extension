@@ -462,17 +462,26 @@
                 common = data;
             }
 
-            // valid_flag0: compatible vibration/haptics + R2/L2 trigger controls.
-            // DualSense Explorer uses 0xFF here: rumble/haptics plus all
-            // trigger/audio enable flags are valid for this output packet.
-            common[0] = 0xFF;
-            // valid_flag1: mute LED, power-save, lightbar and player indicators.
-            common[1] = 0xF3;
+            // Trigger effects have their own validity bits. The official
+            // DualSense output layout uses bit 2 for R2 and bit 3 for L2.
+            // Do NOT rely on 0xFF here: bits 0/1 select the classic rumble
+            // haptics path and can interfere with the adaptive-trigger path.
+            let triggerFlags = 0;
+            if (this.dualSenseOutput.r2Effect[0] !== 0) triggerFlags |= 0x04;
+            if (this.dualSenseOutput.l2Effect[0] !== 0) triggerFlags |= 0x08;
+            common[0] = triggerFlags;
+            // Enable the trigger/effect power-control field as well as the
+            // existing mute/light/player controls. 0x40 is the documented
+            // vibration-attenuation/effect-power control flag; zero means
+            // no attenuation (full trigger effect strength).
+            common[1] = 0x40 | 0x04 | 0x10;
 
             common[2] = this.dualSenseOutput.rumbleRight;
             common[3] = this.dualSenseOutput.rumbleLeft;
             common[8] = this.dualSenseOutput.muteLed;
             common[9] = this.dualSenseOutput.muteLed ? 0x10 : 0x00;
+            // Overall motor/effect power. Keep trigger attenuation at zero.
+            common[37] = 0x00;
 
             // Each adaptive-trigger effect is an 11-byte block:
             // mode + 9 parameters + reserved byte.
