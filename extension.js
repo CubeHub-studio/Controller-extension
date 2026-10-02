@@ -43,7 +43,7 @@
             // Raw DualSense input state. This is used when Chrome exposes the
             // controller through WebHID but does not expose it through the
             // Gamepad API (which can happen when WebHID owns the device).
-            this.dualSenseRawButtons = new Array(18).fill(false);
+            this.dualSenseRawButtons = new Array(19).fill(false);
             this.dualSenseRawPreviousButtons = new Array(18).fill(false);
             this.dualSenseRawAxes = [0, 0, 0, 0];
             this.dualSenseTouchX = 0;
@@ -194,7 +194,7 @@
                 dpadleft: 14, left: 14,
                 dpadright: 15, right: 15,
                 home: 16, guide: 16, ps: 16,
-                touchpad: 17, touchpadbutton: 17
+                touchpad: 17, touchpadbutton: 17, mute: 18, micmute: 18
             };
             const key = this.cleanName(name);
             if (Object.prototype.hasOwnProperty.call(aliases, key)) return aliases[key];
@@ -262,8 +262,8 @@
                     { opcode: 'setAdaptiveTriggerMode', blockType: Scratch.BlockType.COMMAND, text: 'Adaptive trigger mode controller [CONTROLLER] trigger [TRIGGER] set [MODE]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, TRIGGER: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggers', defaultValue: 'L' }, MODE: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggerModes', defaultValue: '1. Off' } } }
                 ],
                 menus: {
-                    physicalButtons: { acceptReporters: true, items: Array.from({ length: 18 }, (_, i) => String(i + 1)) },
-                    buttons: { acceptReporters: true, items: ['A','B','X','Y','Cross','Circle','Square','Triangle','LB','RB','LT','RT','L1','R1','L2','R2','Back / Share','Start / Options','L3','R3','DPad Up','DPad Down','DPad Left','DPad Right','Guide / PS','Touchpad'] },
+                    physicalButtons: { acceptReporters: true, items: Array.from({ length: 19 }, (_, i) => String(i + 1)) },
+                    buttons: { acceptReporters: true, items: ['A','B','X','Y','Cross','Circle','Square','Triangle','LB','RB','LT','RT','L1','R1','L2','R2','Back / Share','Start / Options','L3','R3','DPad Up','DPad Down','DPad Left','DPad Right','Guide / PS','Touchpad','Mute'] },
                     sticks: ['Left stick','Right stick'], directions: ['X','Y'], adaptiveTriggers: ['L','R'], lightTransition: ['Fade','Instant'],
                     adaptiveTriggerModes: ['1. Off','2. Feedback','3. Weapon','4. Vibration','5. Slope Feedback','6. Multiple-Position Feedback','7. Multiple-Position Vibration','8. GameCube Emulation','9. Machine Gun / Automatic','10. Galloping','11. Pistol / Semi-Automatic','12. Rifle / Bow & Arrow','13. Choppy','14. Soft','15. Medium','16. Max','17. Pulse / Tension Guard','18. Rumble Transmission','19. Lock up','20. Calibration (MAY ALTER REAL CALIBRATION!)']
                 }
@@ -359,7 +359,7 @@
                 !!(buttons1 & 0x10), !!(buttons1 & 0x20), !!(buttons1 & 0x40), !!(buttons1 & 0x80),
                 dpad === 0 || dpad === 1 || dpad === 7, dpad === 3 || dpad === 4 || dpad === 5,
                 dpad === 5 || dpad === 6 || dpad === 7, dpad === 1 || dpad === 2 || dpad === 3,
-                !!(buttons2 & 0x01), !!(buttons2 & 0x02)
+                !!(buttons2 & 0x01), !!(buttons2 & 0x02), !!(buttons2 & 0x04)
             ];
 
             const touchOffset = reportId === 0x31 ? 33 : 33;
@@ -447,7 +447,7 @@
             common[2] = this.dualSenseOutput.rumbleRight;
             common[3] = this.dualSenseOutput.rumbleLeft;
             common[8] = this.dualSenseOutput.muteLed;
-            common[9] = this.dualSenseOutput.muteLed ? 0x00 : 0x10;
+            common[9] = this.dualSenseOutput.muteLed ? 0x10 : 0x00;
 
             // Correct 8-byte adaptive-trigger slots from DualSense Explorer.
             const r2Offset = this.dualSenseConnection === 'bluetooth' ? 12 : 10;
