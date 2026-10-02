@@ -44,7 +44,7 @@
             // controller through WebHID but does not expose it through the
             // Gamepad API (which can happen when WebHID owns the device).
             this.dualSenseRawButtons = new Array(19).fill(false);
-            this.dualSenseRawPreviousButtons = new Array(18).fill(false);
+            this.dualSenseRawPreviousButtons = new Array(19).fill(false);
             this.dualSenseRawAxes = [0, 0, 0, 0];
             this.dualSenseTouchX = 0;
             this.dualSenseTouchY = 0;
@@ -117,6 +117,7 @@
                     current[9] = !!this.dualSenseRawButtons[9];   // Options
                     current[16] = !!this.dualSenseRawButtons[16]; // PS / Guide
                     current[17] = !!this.dualSenseRawButtons[17]; // Touchpad click
+                    current[18] = !!this.dualSenseRawButtons[18]; // Mute
                 }
 
                 // Exactly one state transition per animation frame.
@@ -333,14 +334,17 @@
             let buttons0, buttons1, buttons2, axes;
 
             if (reportId === 0x01 && this.dualSenseConnection === 'bluetooth' && data.byteLength === 9) {
-                // Bluetooth minimal report 0x01 is only 9 data bytes in WebHID:
-                // sticks 0-3, buttons 4-6, L2/R2 axes 7-8.
-                axes = [(data.getUint8(1)/127.5)-1,(data.getUint8(2)/127.5)-1,(data.getUint8(3)/127.5)-1,(data.getUint8(4)/127.5)-1];
-                buttons0 = data.getUint8(5); buttons1 = data.getUint8(6); buttons2 = data.getUint8(7);
+                // Bluetooth minimal report 0x01 is 10 bytes on the wire including
+                // report ID, therefore 9 bytes in WebHID event.data.
+                // event.data starts after the report ID: sticks 0-3,
+                // buttons 4-6, L2/R2 axes 7-8.
+                axes = [(data.getUint8(0)/127.5)-1,(data.getUint8(1)/127.5)-1,(data.getUint8(2)/127.5)-1,(data.getUint8(3)/127.5)-1];
+                buttons0 = data.getUint8(4); buttons1 = data.getUint8(5); buttons2 = data.getUint8(6);
             } else if (reportId === 0x01 && this.dualSenseConnection === 'usb' && data.byteLength === 63) {
                 // USB report 0x01 is 63 data bytes (report ID is supplied separately).
                 axes = [(data.getUint8(0)/127.5)-1,(data.getUint8(1)/127.5)-1,(data.getUint8(2)/127.5)-1,(data.getUint8(3)/127.5)-1];
-                buttons0 = data.getUint8(8); buttons1 = data.getUint8(9); buttons2 = data.getUint8(10);
+                // USB wire bytes 8/9/10 become WebHID data bytes 7/8/9.
+                buttons0 = data.getUint8(7); buttons1 = data.getUint8(8); buttons2 = data.getUint8(9);
             } else if (reportId === 0x31 && this.dualSenseConnection === 'bluetooth' && data.byteLength === 77) {
                 // Bluetooth full report 0x31 is 77 data bytes.
                 axes = [(data.getUint8(1)/127.5)-1,(data.getUint8(2)/127.5)-1,(data.getUint8(3)/127.5)-1,(data.getUint8(4)/127.5)-1];
@@ -389,7 +393,7 @@
         controllerTypeBlock(args) { const p=this.getPad(args.CONTROLLER); return this.controllerType(p); }
         buttonName(args) {
             const p=this.getPad(args.CONTROLLER); const i=Math.max(0,Math.floor(Number(args.BUTTON)||1)-1); if(!p) return '';
-            const names=this.controllerType(p)==='PlayStation' ? ['Cross','Circle','Square','Triangle','L1','R1','L2','R2','Create / Share','Options','L3','R3','DPad Up','DPad Down','DPad Left','DPad Right','Guide / PS','Touchpad'] : ['A','B','X','Y','LB','RB','LT','RT','View / Back','Menu / Start','LS','RS','DPad Up','DPad Down','DPad Left','DPad Right','Xbox Guide','Extra'];
+            const names=this.controllerType(p)==='PlayStation' ? ['Cross','Circle','Square','Triangle','L1','R1','L2','R2','Create / Share','Options','L3','R3','DPad Up','DPad Down','DPad Left','DPad Right','Guide / PS','Touchpad','Mute'] : ['A','B','X','Y','LB','RB','LT','RT','View / Back','Menu / Start','LS','RS','DPad Up','DPad Down','DPad Left','DPad Right','Xbox Guide','Extra'];
             return names[i] || ('Button ' + (i+1));
         }
         controllerMapping(args) { const p=this.getPad(args.CONTROLLER); return p ? (p.mapping||'') : ''; }
