@@ -268,7 +268,7 @@
                     physicalButtons: { acceptReporters: true, items: Array.from({ length: 19 }, (_, i) => String(i + 1)) },
                     buttons: { acceptReporters: true, items: ['A','B','X','Y','Cross','Circle','Square','Triangle','LB','RB','LT','RT','L1','R1','L2','R2','Back / Share','Start / Options','L3','R3','DPad Up','DPad Down','DPad Left','DPad Right','Guide / PS','Touchpad','Mute'] },
                     sticks: ['Left stick','Right stick'], directions: ['X','Y'], muteLEDStates: ['On','Off'], adaptiveTriggers: ['L','R'], lightTransition: ['Fade','Instant'],
-                    adaptiveTriggerModes: ['Off','Feedback','Weapon','Vibration','Slope Feedback','Multiple-Position Feedback','Multiple-Position Vibration','GameCube Emulation','Machine Gun / Automatic','Galloping','Pistol / Semi-Automatic','Rifle / Bow & Arrow','Choppy','Soft','Medium','Max','Pulse / Tension Guard','Rumble Transmission','Lock up','Calibration']
+                    adaptiveTriggerModes: ['Off','Feedback','Weapon','Vibration','Slope Feedback','Multiple-Position Feedback','Multiple-Position Vibration','GameCube Emulation','Machine Gun / Automatic','Galloping','Pistol / Semi-Automatic','Rifle / Bow & Arrow','Choppy','Soft','Medium','Max','Pulse / Tension Guard','Rumble Transmission','Lock up']
                 }
             };
         }
