@@ -114,11 +114,20 @@
                 // report, merge those raw HID bits into the Gamepad state so
                 // the normal button blocks can read them too.
                 if (this.controllerType(pad) === 'PlayStation' && this.dualSenseInputSeen) {
-                    current[8] = !!this.dualSenseRawButtons[8];   // Create / Share
-                    current[9] = !!this.dualSenseRawButtons[9];   // Options
-                    current[16] = !!this.dualSenseRawButtons[16]; // PS / Guide
-                    current[17] = !!this.dualSenseRawButtons[17]; // Touchpad click
-                    current[18] = !!this.dualSenseRawButtons[18]; // Mute
+                    // When WebHID owns the DualSense, Chrome's Gamepad API can
+                    // expose stale/incomplete button mappings. Use the raw HID
+                    // button bitfields for ALL physical buttons instead of only
+                    // the extra PS5 buttons.
+                    //
+                    // DualSense HID layout:
+                    // buttons[0]: D-pad + Square/Cross/Circle/Triangle
+                    // buttons[1]: L1/R1/L2/R2/Create/Options/L3/R3
+                    // buttons[2]: PS/Touchpad/Mute
+                    // These are the same masks used by the PlayStation HID
+                    // driver and preserve the physical button identity.
+                    for (let i = 0; i < 19; i++) {
+                        current[i] = !!this.dualSenseRawButtons[i];
+                    }
                 }
 
                 // Exactly one state transition per animation frame.
