@@ -173,7 +173,7 @@
         }
 
         cleanName(name) {
-            return String(name || '').toLowerCase().replace(/[ _-]/g, '');
+            return String(name || '').toLowerCase().replace(/[ _\/-]/g, '');
         }
 
         buttonIndex(name) {
@@ -186,15 +186,15 @@
                 rb: 5, r1: 5,
                 lt: 6, l2: 6,
                 rt: 7, r2: 7,
-                back: 8, select: 8, share: 8, create: 8, view: 8,
-                start: 9, options: 9, menu: 9,
+                back: 8, select: 8, share: 8, create: 8, view: 8, backshare: 8,
+                start: 9, options: 9, menu: 9, startoptions: 9,
                 l3: 10, leftstick: 10,
                 r3: 11, rightstick: 11,
                 dpadup: 12, up: 12,
                 dpaddown: 13, down: 13,
                 dpadleft: 14, left: 14,
                 dpadright: 15, right: 15,
-                home: 16, guide: 16, ps: 16,
+                home: 16, guide: 16, ps: 16, guideps: 16,
                 touchpad: 17, touchpadbutton: 17, mute: 18, micmute: 18
             };
             const key = this.cleanName(name);
@@ -258,6 +258,8 @@
                     { opcode: 'setDualSenseLight', blockType: Scratch.BlockType.COMMAND, text: 'set DualSense light R [RED] G [GREEN] B [BLUE] [TRANSITION]', arguments: { RED: { type: Scratch.ArgumentType.NUMBER, defaultValue: 255 }, GREEN: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, BLUE: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, TRANSITION: { type: Scratch.ArgumentType.STRING, menu: 'lightTransition', defaultValue: 'Instant' } } },
                     { opcode: 'setDualSenseLightBrightness', blockType: Scratch.BlockType.COMMAND, text: 'DualSense light brightness [BRIGHTNESS] [TRANSITION]', arguments: { BRIGHTNESS: { type: Scratch.ArgumentType.NUMBER, defaultValue: 255 }, TRANSITION: { type: Scratch.ArgumentType.STRING, menu: 'lightTransition', defaultValue: 'Instant' } } },
                     { opcode: 'setDualSenseLightOff', blockType: Scratch.BlockType.COMMAND, text: 'turn DualSense light off [TRANSITION]', arguments: { TRANSITION: { type: Scratch.ArgumentType.STRING, menu: 'lightTransition', defaultValue: 'Instant' } } },
+                    { opcode: 'setDualSenseMuteLED', blockType: Scratch.BlockType.COMMAND, text: 'set DualSense mute LED [STATE]', arguments: { STATE: { type: Scratch.ArgumentType.STRING, menu: 'muteLEDStates', defaultValue: 'On' } } },
+                    { opcode: 'dualSenseMuteLED', blockType: Scratch.BlockType.BOOLEAN, text: 'DualSense mute LED on?' },
                     { opcode: 'customAdaptiveTriggerEffect', blockType: Scratch.BlockType.COMMAND, text: 'Custom adaptive trigger controller [CONTROLLER] trigger [TRIGGER] mode [MODE] parameters [PARAMETERS]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, TRIGGER: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggers', defaultValue: 'L' }, MODE: { type: Scratch.ArgumentType.STRING, defaultValue: '0x21' }, PARAMETERS: { type: Scratch.ArgumentType.STRING, defaultValue: '255,255,255,255,255,255,0,0,0,0' } } },
                     { opcode: 'adaptiveTriggerModeNumber', blockType: Scratch.BlockType.REPORTER, text: '[NUMBER] adaptive trigger mode', arguments: { NUMBER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 } } },
                     { opcode: 'setAdaptiveTriggerMode', blockType: Scratch.BlockType.COMMAND, text: 'Adaptive trigger mode controller [CONTROLLER] trigger [TRIGGER] set [MODE]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, TRIGGER: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggers', defaultValue: 'L' }, MODE: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggerModes', defaultValue: '1. Off' } } }
@@ -265,7 +267,7 @@
                 menus: {
                     physicalButtons: { acceptReporters: true, items: Array.from({ length: 19 }, (_, i) => String(i + 1)) },
                     buttons: { acceptReporters: true, items: ['A','B','X','Y','Cross','Circle','Square','Triangle','LB','RB','LT','RT','L1','R1','L2','R2','Back / Share','Start / Options','L3','R3','DPad Up','DPad Down','DPad Left','DPad Right','Guide / PS','Touchpad','Mute'] },
-                    sticks: ['Left stick','Right stick'], directions: ['X','Y'], adaptiveTriggers: ['L','R'], lightTransition: ['Fade','Instant'],
+                    sticks: ['Left stick','Right stick'], directions: ['X','Y'], muteLEDStates: ['On','Off'], adaptiveTriggers: ['L','R'], lightTransition: ['Fade','Instant'],
                     adaptiveTriggerModes: ['1. Off','2. Feedback','3. Weapon','4. Vibration','5. Slope Feedback','6. Multiple-Position Feedback','7. Multiple-Position Vibration','8. GameCube Emulation','9. Machine Gun / Automatic','10. Galloping','11. Pistol / Semi-Automatic','12. Rifle / Bow & Arrow','13. Choppy','14. Soft','15. Medium','16. Max','17. Pulse / Tension Guard','18. Rumble Transmission','19. Lock up','20. Calibration (MAY ALTER REAL CALIBRATION!)']
                 }
             };
@@ -333,28 +335,47 @@
             const reportId = Number(event.reportId);
             let buttons0, buttons1, buttons2, axes;
 
-            if (reportId === 0x01 && this.dualSenseConnection === 'bluetooth' && data.byteLength === 9) {
-                // Bluetooth minimal report 0x01 is 10 bytes on the wire including
-                // report ID, therefore 9 bytes in WebHID event.data.
-                // event.data starts after the report ID: sticks 0-3,
-                // buttons 4-6, L2/R2 axes 7-8.
-                axes = [(data.getUint8(0)/127.5)-1,(data.getUint8(1)/127.5)-1,(data.getUint8(2)/127.5)-1,(data.getUint8(3)/127.5)-1];
-                buttons0 = data.getUint8(4); buttons1 = data.getUint8(5); buttons2 = data.getUint8(6);
-            } else if (reportId === 0x01 && this.dualSenseConnection === 'usb' && data.byteLength === 63) {
-                // USB report 0x01 is 63 data bytes (report ID is supplied separately).
-                axes = [(data.getUint8(0)/127.5)-1,(data.getUint8(1)/127.5)-1,(data.getUint8(2)/127.5)-1,(data.getUint8(3)/127.5)-1];
-                // USB wire bytes 8/9/10 become WebHID data bytes 7/8/9.
-                buttons0 = data.getUint8(7); buttons1 = data.getUint8(8); buttons2 = data.getUint8(9);
-            } else if (reportId === 0x31 && this.dualSenseConnection === 'bluetooth' && data.byteLength === 77) {
-                // Bluetooth full report 0x31 is 77 data bytes.
-                axes = [(data.getUint8(1)/127.5)-1,(data.getUint8(2)/127.5)-1,(data.getUint8(3)/127.5)-1,(data.getUint8(4)/127.5)-1];
-                buttons0 = data.getUint8(8); buttons1 = data.getUint8(9); buttons2 = data.getUint8(10);
-            } else if (reportId === 0x01 && data.byteLength >= 9) {
-                // Compact Bluetooth 0x01 report. WebHID strips the report ID.
-                // Protocol bytes 6,7,8 become data[5],data[6],data[7].
-                axes = [(data.getUint8(0)/127.5)-1,(data.getUint8(1)/127.5)-1,(data.getUint8(2)/127.5)-1,(data.getUint8(3)/127.5)-1];
-                buttons0 = data.getUint8(4); buttons1 = data.getUint8(5); buttons2 = data.getUint8(6);
-            } else return;
+            if (reportId === 0x01 && data.byteLength === 63) {
+                // Full DualSense report 0x01. WebHID data excludes report ID.
+                // This layout is used over USB and by some Sony Bluetooth profiles.
+                axes = [
+                    (data.getUint8(0) / 127.5) - 1,
+                    (data.getUint8(1) / 127.5) - 1,
+                    (data.getUint8(2) / 127.5) - 1,
+                    (data.getUint8(3) / 127.5) - 1
+                ];
+                buttons0 = data.getUint8(7);
+                buttons1 = data.getUint8(8);
+                buttons2 = data.getUint8(9);
+            } else if (reportId === 0x31 && data.byteLength === 77) {
+                // Full Bluetooth report 0x31. WebHID data excludes report ID,
+                // so the Bluetooth header occupies data[0], then the common
+                // report begins at data[1].
+                axes = [
+                    (data.getUint8(1) / 127.5) - 1,
+                    (data.getUint8(2) / 127.5) - 1,
+                    (data.getUint8(3) / 127.5) - 1,
+                    (data.getUint8(4) / 127.5) - 1
+                ];
+                buttons0 = data.getUint8(8);
+                buttons1 = data.getUint8(9);
+                buttons2 = data.getUint8(10);
+            } else if (reportId === 0x01 && data.byteLength === 9) {
+                // Bluetooth minimal report 0x01. It has no PS/Home or mute
+                // button; those become available when the full 0x31 report
+                // is enabled with feature report 0x05.
+                axes = [
+                    (data.getUint8(0) / 127.5) - 1,
+                    (data.getUint8(1) / 127.5) - 1,
+                    (data.getUint8(2) / 127.5) - 1,
+                    (data.getUint8(3) / 127.5) - 1
+                ];
+                buttons0 = data.getUint8(4);
+                buttons1 = data.getUint8(5);
+                buttons2 = 0;
+            } else {
+                return;
+            }
 
             const dpad = buttons0 & 0x0F;
             const next = [
@@ -366,7 +387,7 @@
                 !!(buttons2 & 0x01), !!(buttons2 & 0x02), !!(buttons2 & 0x04)
             ];
 
-            const touchOffset = reportId === 0x31 ? 33 : 33;
+            const touchOffset = reportId === 0x31 ? 33 : 32;
             let touchX = 0, touchY = 0, touchActive = false;
             if (data.byteLength >= touchOffset + 4) {
                 const contact = data.getUint8(touchOffset);
@@ -446,7 +467,7 @@
             // trigger/audio enable flags are valid for this output packet.
             common[0] = 0xFF;
             // valid_flag1: mute LED, power-save, lightbar and player indicators.
-            common[1] = 0xF7;
+            common[1] = 0xF3;
 
             common[2] = this.dualSenseOutput.rumbleRight;
             common[3] = this.dualSenseOutput.rumbleLeft;
@@ -486,6 +507,19 @@
             } catch (_) {
                 return false;
             }
+        }
+
+        async setDualSenseMuteLED(args) {
+            if (!this.dualSenseConnected()) return false;
+            const state = String(args && args.STATE || 'On').toLowerCase();
+            const enabled = state !== 'off';
+            return this.sendDualSenseOutput(output => {
+                output.muteLed = enabled ? 1 : 0;
+            });
+        }
+
+        dualSenseMuteLED() {
+            return !!(this.dualSenseConnected() && this.dualSenseOutput.muteLed);
         }
 
         async setDualSenseLightColor(r,g,b,transition){if(!this.dualSenseConnected())return false;r=this.clampByte(r);g=this.clampByte(g);b=this.clampByte(b);const start=this.dualSenseLightColor.slice(),steps=String(transition||'Instant')==='Fade'?10:1;for(let i=1;i<=steps;i++){const t=i/steps,cr=Math.round(start[0]+(r-start[0])*t),cg=Math.round(start[1]+(g-start[1])*t),cb=Math.round(start[2]+(b-start[2])*t);if(!await this.sendDualSenseOutput(state=>{state.lightbar=[cr,cg,cb];}))return false;if(steps>1&&i<steps)await new Promise(resolve=>setTimeout(resolve,30));}this.dualSenseLightColor=[r,g,b];return true;}
