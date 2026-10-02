@@ -362,8 +362,11 @@
                     (data.getUint8(3) / 127.5) - 1,
                     (data.getUint8(4) / 127.5) - 1
                 ];
-                triggerL = data.getUint8(6);
-                triggerR = data.getUint8(7);
+                // Full Bluetooth report 0x31: after the report sequence/header,
+                // L2 and R2 are the two analog trigger bytes immediately before
+                // the hat/button byte. WebHID data excludes the report ID.
+                triggerL = data.getUint8(5);
+                triggerR = data.getUint8(6);
                 buttons0 = data.getUint8(8);
                 buttons1 = data.getUint8(9);
                 buttons2 = data.getUint8(10);
@@ -377,8 +380,10 @@
                     (data.getUint8(2) / 127.5) - 1,
                     (data.getUint8(3) / 127.5) - 1
                 ];
-                triggerL = data.getUint8(4);
-                triggerR = data.getUint8(5);
+                // Minimal Bluetooth report 0x01 does not contain analog
+                // trigger axes; those are only present in the full 0x31 report.
+                triggerL = 0;
+                triggerR = 0;
                 buttons0 = data.getUint8(4);
                 buttons1 = data.getUint8(5);
                 buttons2 = 0;
