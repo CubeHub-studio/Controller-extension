@@ -462,24 +462,22 @@
                 common = data;
             }
 
-            // Trigger effects have their own validity bits. The official
-            // DualSense output layout uses bit 2 for R2 and bit 3 for L2.
-            // Do NOT rely on 0xFF here: bits 0/1 select the classic rumble
-            // haptics path and can interfere with the adaptive-trigger path.
-            let triggerFlags = 0;
-            if (this.dualSenseOutput.r2Effect[0] !== 0) triggerFlags |= 0x04;
-            if (this.dualSenseOutput.l2Effect[0] !== 0) triggerFlags |= 0x08;
-            common[0] = triggerFlags;
-            // Enable the trigger/effect power-control field as well as the
-            // existing mute/light/player controls. 0x40 is the documented
-            // vibration-attenuation/effect-power control flag; zero means
-            // no attenuation (full trigger effect strength).
-            common[1] = 0x40 | 0x04 | 0x10;
+            // DualSense main output report validity flags.
+            // The known-good DualSense HID reference implementation sends
+            // 0xFF for valid_flag0 and 0xF7 for valid_flag1. In particular,
+            // bit 0/1 select the controller haptics path, while the trigger
+            // effect bytes are consumed from the same main output report.
+            // Keep the reference values instead of inventing a separate
+            // trigger-only flag combination.
+            common[0] = 0xFF;
+            // bit 0 = mute LED, bit 1 = power-save, bit 2 = lightbar,
+            // bit 4 = player LEDs, bit 5 = haptic low-pass/filter control.
+            common[1] = 0xF7;
 
             common[2] = this.dualSenseOutput.rumbleRight;
             common[3] = this.dualSenseOutput.rumbleLeft;
             common[8] = this.dualSenseOutput.muteLed;
-            common[9] = this.dualSenseOutput.muteLed ? 0x10 : 0x00;
+            common[9] = this.dualSenseOutput.muteLed ? 0x00 : 0x10;
             // Overall motor/effect power. Keep trigger attenuation at zero.
             common[37] = 0x00;
 
