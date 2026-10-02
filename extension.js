@@ -107,6 +107,18 @@
                 const old = this.currentButtons.get(pad.index) || [];
                 const current = Array.from(pad.buttons || [], b => this.readButton(b));
 
+                // The Web Gamepad API's "standard" mapping does not reliably
+                // expose DualSense's physical Create/Share, Options, PS, and
+                // touchpad-click buttons. When WebHID has seen a DualSense
+                // report, merge those raw HID bits into the Gamepad state so
+                // the normal button blocks can read them too.
+                if (this.controllerType(pad) === 'PlayStation' && this.dualSenseInputSeen) {
+                    current[8] = !!this.dualSenseRawButtons[8];   // Create / Share
+                    current[9] = !!this.dualSenseRawButtons[9];   // Options
+                    current[16] = !!this.dualSenseRawButtons[16]; // PS / Guide
+                    current[17] = !!this.dualSenseRawButtons[17]; // Touchpad click
+                }
+
                 // Exactly one state transition per animation frame.
                 this.previousButtons.set(pad.index, old.slice());
                 this.currentButtons.set(pad.index, current);
