@@ -49,6 +49,7 @@
             this.dualSenseTouchX = 0;
             this.dualSenseTouchY = 0;
             this.dualSenseTouchTouched = false;
+            this.dualSenseTriggerPressure = { L: 0, R: 0 };
             this.dualSenseInputListener = null;
             this.dualSenseSyntheticIndex = 1000;
             this.dualSenseInputSeen = false;
@@ -246,6 +247,7 @@
                     { opcode: 'touchpadX', blockType: Scratch.BlockType.REPORTER, text: 'controller [CONTROLLER] Touchpad X', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 } } },
                     { opcode: 'touchpadY', blockType: Scratch.BlockType.REPORTER, text: 'controller [CONTROLLER] Touchpad Y', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 } } },
                     { opcode: 'touchpadTouched', blockType: Scratch.BlockType.BOOLEAN, text: 'controller [CONTROLLER] Touchpad touched?', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 } } },
+                    { opcode: 'triggerPressure', blockType: Scratch.BlockType.REPORTER, text: 'Controller [CONTROLLER] [TRIGGER] trigger pressure', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, TRIGGER: { type: Scratch.ArgumentType.STRING, menu: 'triggerSides', defaultValue: 'L' } } },
                     { opcode: 'axisValue', blockType: Scratch.BlockType.REPORTER, text: 'controller [CONTROLLER] axis [AXIS]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, AXIS: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 } } },
                     { opcode: 'stickValue', blockType: Scratch.BlockType.REPORTER, text: 'controller [CONTROLLER] [STICK] [DIRECTION]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, STICK: { type: Scratch.ArgumentType.STRING, menu: 'sticks', defaultValue: 'Left stick' }, DIRECTION: { type: Scratch.ArgumentType.STRING, menu: 'directions', defaultValue: 'X' } } },
                     '---',
@@ -267,7 +269,7 @@
                 menus: {
                     physicalButtons: { acceptReporters: true, items: Array.from({ length: 19 }, (_, i) => String(i + 1)) },
                     buttons: { acceptReporters: true, items: ['A','B','X','Y','Cross','Circle','Square','Triangle','LB','RB','LT','RT','L1','R1','L2','R2','Back / Share','Start / Options','L3','R3','DPad Up','DPad Down','DPad Left','DPad Right','Guide / PS','Touchpad','Mute'] },
-                    sticks: ['Left stick','Right stick'], directions: ['X','Y'], muteLEDStates: ['On','Off'], adaptiveTriggers: ['L','R'], lightTransition: ['Fade','Instant'],
+                    sticks: ['Left stick','Right stick'], directions: ['X','Y'], triggerSides: ['L','R'], muteLEDStates: ['On','Off'], adaptiveTriggers: ['L','R'], lightTransition: ['Fade','Instant'],
                     adaptiveTriggerModes: ['Off','Feedback','Weapon','Vibration','Slope Feedback','Multiple-Position Feedback','Multiple-Position Vibration','GameCube Emulation','Machine Gun / Automatic','Galloping','Pistol / Semi-Automatic','Rifle / Bow & Arrow','Choppy','Soft','Medium','Max','Pulse / Tension Guard','Rumble Transmission','Lock up']
                 }
             };
@@ -334,6 +336,7 @@
             if (!data || data.byteLength < 7) return;
             const reportId = Number(event.reportId);
             let buttons0, buttons1, buttons2, axes;
+            let triggerL = 0, triggerR = 0;
 
             if (reportId === 0x01 && data.byteLength === 63) {
                 // Full DualSense report 0x01. WebHID data excludes report ID.
@@ -344,6 +347,8 @@
                     (data.getUint8(2) / 127.5) - 1,
                     (data.getUint8(3) / 127.5) - 1
                 ];
+                triggerL = data.getUint8(4);
+                triggerR = data.getUint8(5);
                 buttons0 = data.getUint8(7);
                 buttons1 = data.getUint8(8);
                 buttons2 = data.getUint8(9);
@@ -357,6 +362,8 @@
                     (data.getUint8(3) / 127.5) - 1,
                     (data.getUint8(4) / 127.5) - 1
                 ];
+                triggerL = data.getUint8(6);
+                triggerR = data.getUint8(7);
                 buttons0 = data.getUint8(8);
                 buttons1 = data.getUint8(9);
                 buttons2 = data.getUint8(10);
@@ -370,6 +377,8 @@
                     (data.getUint8(2) / 127.5) - 1,
                     (data.getUint8(3) / 127.5) - 1
                 ];
+                triggerL = data.getUint8(4);
+                triggerR = data.getUint8(5);
                 buttons0 = data.getUint8(4);
                 buttons1 = data.getUint8(5);
                 buttons2 = 0;
@@ -404,6 +413,7 @@
             this.dualSenseTouchX = touchX;
             this.dualSenseTouchY = touchY;
             this.dualSenseTouchTouched = touchActive;
+            this.dualSenseTriggerPressure = { L: triggerL, R: triggerR };
             this.dualSenseInputSeen = true;
             this.previousButtons.set(this.dualSenseSyntheticIndex, this.dualSenseRawPreviousButtons.slice());
             this.currentButtons.set(this.dualSenseSyntheticIndex, this.dualSenseRawButtons.slice());
@@ -425,6 +435,17 @@
         touchpadX(args) { const p=this.getPad(args.CONTROLLER); return !p||this.controllerType(p)!=='PlayStation' ? 0 : (this.dualSenseTouchX/1919)*480-240; }
         touchpadY(args) { const p=this.getPad(args.CONTROLLER); return !p||this.controllerType(p)!=='PlayStation' ? 0 : 180-(this.dualSenseTouchY/1079)*360; }
         touchpadTouched(args) { const p=this.getPad(args.CONTROLLER); return !!(p&&this.controllerType(p)==='PlayStation'&&this.dualSenseTouchTouched); }
+        triggerPressure(args) {
+            const p = this.getPad(args.CONTROLLER);
+            if (!p) return 0;
+            const trigger = String(args.TRIGGER || 'L').toUpperCase() === 'R' ? 'R' : 'L';
+            if (this.controllerType(p) === 'PlayStation' && this.dualSenseInputSeen) {
+                return this.dualSenseTriggerPressure[trigger];
+            }
+            const index = trigger === 'R' ? 7 : 6;
+            const button = p.buttons && p.buttons[index];
+            return Math.round(this.readButtonValue(button) * 255);
+        }
         axisValue(args) { const p=this.getPad(args.CONTROLLER), n=Math.max(1,Math.floor(Number(args.AXIS)||1))-1; return p&&Number.isFinite(p.axes[n])?p.axes[n]:0; }
         stickValue(args) { const p=this.getPad(args.CONTROLLER); if(!p)return 0; const right=String(args.STICK).toLowerCase().startsWith('right'), y=String(args.DIRECTION).toUpperCase()==='Y', axis=(right?2:0)+(y?1:0); return Number.isFinite(p.axes[axis])?p.axes[axis]:0; }
 
