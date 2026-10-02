@@ -575,8 +575,9 @@
             strength=Math.max(0,Math.min(8,Math.floor(strength)));
             effect.fill(0);
             if(strength<=0){effect[0]=0x00;return;}
+            // Official weapon/trigger-break effect: 0x25.
             const zones=(1<<start)|(1<<end);
-            effect[0]=0x22;
+            effect[0]=0x25;
             effect[1]=zones&255;
             effect[2]=(zones>>>8)&255;
             effect[3]=(strength-1)&7;
@@ -601,7 +602,8 @@
             effect[4]=(amplitudeZones>>>8)&255;
             effect[5]=(amplitudeZones>>>16)&255;
             effect[6]=(amplitudeZones>>>24)&255;
-            effect[7]=frequency;
+            // Frequency is parameter P8 (block byte 9: mode + P0..P9).
+            effect[9]=frequency;
         }
 
         setTriggerBow(effect,start,end,strength,snapForce){
@@ -612,12 +614,12 @@
             effect.fill(0);
             if(!strength||!snapForce){effect[0]=0x00;return;}
             const zones=(1<<start)|(1<<end);
-            effect[0]=0x25;
+            // Bow is the firmware's 0x22 effect. P0/P1 are the active
+            // start/end zones; P2 packs draw strength and snap force.
+            effect[0]=0x22;
             effect[1]=zones&255;
             effect[2]=(zones>>>8)&255;
-            const pair=((strength-1)&7)|(((snapForce-1)&7)<<3);
-            effect[3]=pair&255;
-            effect[4]=(pair>>>8)&255;
+            effect[3]=((strength-1)&7)|(((snapForce-1)&7)<<3);
         }
 
         setTriggerGalloping(effect,start,end,firstFoot,secondFoot,frequency){
@@ -628,7 +630,8 @@
             frequency=Math.max(1,Math.min(255,Math.floor(frequency)));
             effect.fill(0);
             const zones=(1<<start)|(1<<end);
-            effect[0]=0x26;
+            // Galloping is the 0x23 positional vibration effect.
+            effect[0]=0x23;
             effect[1]=zones&255;
             effect[2]=(zones>>>8)&255;
             effect[3]=(secondFoot&7)|((firstFoot&7)<<3);
@@ -641,12 +644,14 @@
             frequency=Math.max(1,Math.min(255,Math.floor(frequency)));
             effect.fill(0);
             const zones=(1<<start)|(1<<end);
+            // Machine-gun effect: fixed resistance with cycling vibration.
             effect[0]=0x27;
             effect[1]=zones&255;
             effect[2]=(zones>>>8)&255;
-            effect[3]=(2&7)|((7&7)<<3);
-            effect[4]=frequency;
-            effect[5]=2;
+            effect[3]=2; // minimum/starting amplitude
+            effect[4]=7; // peak amplitude
+            effect[5]=frequency; // vibration frequency
+            effect[6]=2; // wave period
         }
 
         setTriggerMultipleFeedback(effect,strengths){
@@ -675,7 +680,7 @@
             effect[1]=activeZones&255; effect[2]=(activeZones>>>8)&255;
             effect[3]=amplitudeZones&255; effect[4]=(amplitudeZones>>>8)&255;
             effect[5]=(amplitudeZones>>>16)&255; effect[6]=(amplitudeZones>>>24)&255;
-            effect[7]=Math.max(1,Math.min(255,Math.floor(frequency)));
+            effect[9]=Math.max(1,Math.min(255,Math.floor(frequency)));
         }
 
                 async customAdaptiveTriggerEffect(args){
@@ -713,7 +718,7 @@
                     this.setTriggerFeedback(effect,0,6); break;
                 case'Weapon':
                     this.setTriggerWeapon(effect,2,7,6); break;
-                case'Vibration':
+                    case'Vibration':
                     this.setTriggerVibration(effect,0,6,40); break;
                 case'Bow / Arrow':
                     this.setTriggerBow(effect,2,7,6,8); break;
@@ -755,7 +760,7 @@
             if(!this.dualSenseConnected())return false;
             try{
                 const slot=new Uint8Array(11);
-                for(let i=0;i<8;i++)slot[i]=effect&&effect[i]?effect[i]:0;
+                for(let i=0;i<11;i++)slot[i]=effect&&effect[i]?effect[i]:0;
                 // 0x00 is the actual DualSense "off" mode. Do not turn an
                 // explicitly cleared trigger back into another effect.
                 if(slot.every(v=>v===0)) slot[0]=0x00;
