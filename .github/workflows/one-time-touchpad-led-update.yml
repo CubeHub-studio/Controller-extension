@@ -1,0 +1,90 @@
+name: One-time DualSense touchpad LED update
+
+on:
+  push:
+    paths:
+      - .github/workflows/one-time-touchpad-led-update.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add touchpad LED controls
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p = Path("extension.js")
+          s = p.read_text()
+
+          # Add the two Scratch blocks immediately after the existing mute LED block.
+          anchor = "                    { opcode: 'setDualSenseMuteLED', blockType: Scratch.BlockType.COMMAND, text: 'set DualSense mute LED [STATE]', arguments: { STATE: { type: Scratch.ArgumentType.STRING, menu: 'muteLEDStates', defaultValue: 'On' } } },\n"
+          blocks = anchor + "                    { opcode: 'turnOnDualSenseTouchpadLED', blockType: Scratch.BlockType.COMMAND, text: 'Turn on [ZONE] bottom DualSense Touchpad LED', arguments: { ZONE: { type: Scratch.ArgumentType.STRING, menu: 'touchpadLedZones', defaultValue: 'Middle' } } },\n                    { opcode: 'turnOffDualSenseTouchpadLED', blockType: Scratch.BlockType.COMMAND, text: 'Turn off [ZONE] bottom DualSense Touchpad LED', arguments: { ZONE: { type: Scratch.ArgumentType.STRING, menu: 'touchpadLedZones', defaultValue: 'Middle' } } },\n"
+          if "turnOnDualSenseTouchpadLED" not in s:
+              if anchor not in s:
+                  raise SystemExit("Could not find mute LED block anchor")
+              s = s.replace(anchor, blocks, 1)
+
+          # Add the three physical LED zones: 5 LEDs total, grouped as
+          # left pair, center LED, and right pair.
+          menu_anchor = "                    sticks: ['Left stick','Right stick'], directions: ['X','Y'], triggerSides: ['L','R'], muteLEDStates: ['On','Off'], adaptiveTriggers: ['L','R'], lightTransition: ['Fade','Instant'],"
+          menu_replacement = "                    sticks: ['Left stick','Right stick'], directions: ['X','Y'], triggerSides: ['L','R'], muteLEDStates: ['On','Off'], touchpadLedZones: ['Middle','Left','Right'], adaptiveTriggers: ['L','R'], lightTransition: ['Fade','Instant'],"
+          if "touchpadLedZones:" not in s:
+              if menu_anchor not in s:
+                  raise SystemExit("Could not find menu anchor")
+              s = s.replace(menu_anchor, menu_replacement, 1)
+
+          # Add methods immediately after the existing mute LED reporter.
+          method_anchor = "        dualSenseMuteLED() {\n            return !!(this.dualSenseConnected() && this.dualSenseOutput.muteLed);\n        }\n"
+          methods = method_anchor + """
+        dualSenseTouchpadLedMask(zone) {
+            // The DualSense has five white player LEDs beneath the touchpad.
+            // They are represented by bits 0..4 from left to right.
+            // Expose them as the three physical zones visible on the controller:
+            // left pair = bits 0-1, middle = bit 2, right pair = bits 3-4.
+            switch (String(zone || 'Middle').toLowerCase()) {
+                case 'left': return 0x03;
+                case 'right': return 0x18;
+                case 'middle':
+                default: return 0x04;
+            }
+        }
+
+        async turnOnDualSenseTouchpadLED(args) {
+            if (!this.dualSenseConnected()) return false;
+            const mask = this.dualSenseTouchpadLedMask(args && args.ZONE);
+            return this.sendDualSenseOutput(output => {
+                output.playerLeds = (output.playerLeds | mask) & 0x1F;
+            });
+        }
+
+        async turnOffDualSenseTouchpadLED(args) {
+            if (!this.dualSenseConnected()) return false;
+            const mask = this.dualSenseTouchpadLedMask(args && args.ZONE);
+            return this.sendDualSenseOutput(output => {
+                output.playerLeds = output.playerLeds & (~mask & 0x1F);
+            });
+        }
+"""
+          if "dualSenseTouchpadLedMask(zone)" not in s:
+              if method_anchor not in s:
+                  raise SystemExit("Could not find mute LED method anchor")
+              s = s.replace(method_anchor, methods, 1)
+
+          p.write_text(s)
+
+      - name: Commit changes and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/one-time-touchpad-led-update.yml
+          git add extension.js .github/workflows/one-time-touchpad-led-update.yml
+          git commit -m "Add DualSense touchpad LED controls"
+          git push
