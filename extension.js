@@ -29,6 +29,8 @@
             this.dualSenseLightColor = [255, 0, 0];
 
             // Persistent output state. Updating one feature must not erase the others.
+            this.dualSenseTriggerMode = { L: 'Off', R: 'Off' };
+
             this.dualSenseOutput = {
                 rumbleRight: 0,
                 rumbleLeft: 0,
@@ -299,7 +301,8 @@
                     { opcode: 'dualSenseMuteLED', blockType: Scratch.BlockType.BOOLEAN, text: 'DualSense mute LED on?' },
                     { opcode: 'customAdaptiveTriggerEffect', blockType: Scratch.BlockType.COMMAND, text: 'Custom adaptive trigger controller [CONTROLLER] trigger [TRIGGER] mode [MODE] parameters [PARAMETERS]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, TRIGGER: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggers', defaultValue: 'L' }, MODE: { type: Scratch.ArgumentType.STRING, defaultValue: '0x21' }, PARAMETERS: { type: Scratch.ArgumentType.STRING, defaultValue: '255,255,255,255,255,255,0,0,0,0' } } },
                     { opcode: 'adaptiveTriggerModeNumber', blockType: Scratch.BlockType.REPORTER, text: '[NUMBER] adaptive trigger mode', arguments: { NUMBER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 } } },
-                    { opcode: 'setAdaptiveTriggerMode', blockType: Scratch.BlockType.COMMAND, text: 'Adaptive trigger mode controller [CONTROLLER] trigger [TRIGGER] set [MODE]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, TRIGGER: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggers', defaultValue: 'L' }, MODE: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggerModes', defaultValue: '1. Off' } } }
+                    { opcode: 'setAdaptiveTriggerMode', blockType: Scratch.BlockType.COMMAND, text: 'set DualSense trigger [TRIGGER] mode to [MODE]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, TRIGGER: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggers', defaultValue: 'L' }, MODE: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggerModes', defaultValue: '1. Off' } } },
+                    { opcode: 'adaptiveTriggerJammed', blockType: Scratch.BlockType.BOOLEAN, text: '[TRIGGER] trigger is jammed?', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, TRIGGER: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggers', defaultValue: 'L' } } }
                 ],
                 menus: {
                     physicalButtons: { acceptReporters: true, items: Array.from({ length: 19 }, (_, i) => String(i + 1)) },
@@ -675,6 +678,8 @@
             this.dualSenseOutput.l2Effect.fill(0);
             this.dualSenseOutput.r2Effect[0] = 0x05;
             this.dualSenseOutput.l2Effect[0] = 0x05;
+            this.dualSenseTriggerMode.R = 'Off';
+            this.dualSenseTriggerMode.L = 'Off';
 
             // Force this safety release through the queue even if the last
             // recorded state already looked neutral.
@@ -1022,7 +1027,14 @@
                     effect[0] = 0x05;
                     break;
             }
+            this.dualSenseTriggerMode[trigger] = modeName;
             return this.sendDualSenseTriggerOutput(trigger, effect);
+        }
+
+        adaptiveTriggerJammed(args) {
+            const trigger = String(args.TRIGGER || 'L').toUpperCase() === 'R' ? 'R' : 'L';
+            const controller = this.getPad(args.CONTROLLER);
+            return !!(controller && this.controllerType(controller) === 'PlayStation' && this.dualSenseTriggerMode[trigger] === 'Lock up');
         }
 
 
@@ -1048,6 +1060,7 @@
                 effect[i + 1] = parseByte(values[i]);
             }
 
+            this.dualSenseTriggerMode[trigger] = 'Custom';
             return this.sendDualSenseTriggerOutput(trigger, effect);
         }
 
