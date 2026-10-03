@@ -1,0 +1,132 @@
+name: Fix DualSense input parser
+
+on:
+  push:
+    paths:
+      - 'dualsense-input-fix-trigger.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch DualSense HID input parser
+        shell: python
+        run: |
+          from pathlib import Path
+
+          p = Path('extension.js')
+          s = p.read_text()
+          start = s.find('        handleDualSenseInputReport(event) {')
+          end = s.find('\n        controllerCount()', start)
+          if start < 0 or end < 0:
+              raise SystemExit('DualSense input method boundaries not found')
+
+          method = r'''        handleDualSenseInputReport(event) {
+            if (!event || event.device !== this.dualSenseHid) return;
+            const data = event.data;
+            if (!data || typeof data.getUint8 !== 'function') return;
+
+            const reportId = Number(event.reportId);
+            const length = data.byteLength;
+            let axes;
+            let triggerL;
+            let triggerR;
+            let buttons0;
+            let buttons1;
+            let buttons2;
+
+            // WebHID event.data excludes reportId. These are the actual
+            // DualSense report sizes defined by the HID report layouts.
+            if (reportId === 0x01 && length === 63) {
+                // USB 0x01: x y rx ry L2 R2 seq buttons0 buttons1 buttons2...
+                axes = [
+                    data.getUint8(0) / 127.5 - 1,
+                    data.getUint8(1) / 127.5 - 1,
+                    data.getUint8(2) / 127.5 - 1,
+                    data.getUint8(3) / 127.5 - 1
+                ];
+                triggerL = data.getUint8(4);
+                triggerR = data.getUint8(5);
+                buttons0 = data.getUint8(7);
+                buttons1 = data.getUint8(8);
+                buttons2 = data.getUint8(9);
+            } else if (reportId === 0x31 && length === 77) {
+                // Bluetooth 0x31: sequence x y rx ry L2 R2 buttons0...
+                axes = [
+                    data.getUint8(1) / 127.5 - 1,
+                    data.getUint8(2) / 127.5 - 1,
+                    data.getUint8(3) / 127.5 - 1,
+                    data.getUint8(4) / 127.5 - 1
+                ];
+                triggerL = data.getUint8(5);
+                triggerR = data.getUint8(6);
+                buttons0 = data.getUint8(8);
+                buttons1 = data.getUint8(9);
+                buttons2 = data.getUint8(10);
+            } else {
+                return;
+            }
+
+            const dpad = buttons0 & 0x0F;
+            const next = [
+                !!(buttons0 & 0x20), !!(buttons0 & 0x40),
+                !!(buttons0 & 0x10), !!(buttons0 & 0x80),
+                !!(buttons1 & 0x01), !!(buttons1 & 0x02),
+                !!(buttons1 & 0x04), !!(buttons1 & 0x08),
+                !!(buttons1 & 0x10), !!(buttons1 & 0x20),
+                !!(buttons1 & 0x40), !!(buttons1 & 0x80),
+                dpad === 0 || dpad === 1 || dpad === 7,
+                dpad === 3 || dpad === 4 || dpad === 5,
+                dpad === 5 || dpad === 6 || dpad === 7,
+                dpad === 1 || dpad === 2 || dpad === 3,
+                !!(buttons2 & 0x01), !!(buttons2 & 0x02), !!(buttons2 & 0x04)
+            ];
+
+            // USB and Bluetooth place the first touch point at byte 32 in the
+            // WebHID payload. The BT report has a different outer header, but
+            // its common input structure still starts at byte 1 and reaches
+            // the touch point at the same absolute payload offset used here.
+            const touchOffset = 32;
+            let touchX = 0;
+            let touchY = 0;
+            let touchActive = false;
+            if (length >= touchOffset + 4) {
+                const contact = data.getUint8(touchOffset);
+                if ((contact & 0x80) === 0) {
+                    touchX = data.getUint8(touchOffset + 1) |
+                        ((data.getUint8(touchOffset + 2) & 0x0F) << 8);
+                    touchY = ((data.getUint8(touchOffset + 2) >> 4) & 0x0F) |
+                        (data.getUint8(touchOffset + 3) << 4);
+                    touchActive = true;
+                }
+            }
+
+            this.dualSenseRawPreviousButtons = this.dualSenseRawButtons.slice();
+            this.dualSenseRawButtons = next;
+            this.dualSenseRawAxes = axes.map(v => Math.max(-1, Math.min(1, v)));
+            this.dualSenseTouchX = touchX;
+            this.dualSenseTouchY = touchY;
+            this.dualSenseTouchTouched = touchActive;
+            this.dualSenseTriggerPressure = { L: triggerL, R: triggerR };
+            this.dualSenseInputSeen = true;
+            this.previousButtons.set(this.dualSenseSyntheticIndex, this.dualSenseRawPreviousButtons.slice());
+            this.currentButtons.set(this.dualSenseSyntheticIndex, this.dualSenseRawButtons.slice());
+        }
+'''
+          p.write_text(s[:start] + method + s[end:])
+
+      - name: Commit and remove temporary workflow
+        shell: bash
+        run: |
+          rm -f dualsense-input-fix-trigger.txt .github/workflows/fix-dualsense-input.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add extension.js dualsense-input-fix-trigger.txt .github/workflows/fix-dualsense-input.yml
+          git commit -m 'Fix DualSense button bumper and trigger input parsing'
+          git push
