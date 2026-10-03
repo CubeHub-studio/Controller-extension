@@ -388,16 +388,32 @@
 
         async searchForNewControllers() {
             this.poll();
+
+            // Gamepad API devices are read-only; DualSense HID access requires
+            // an explicit user-granted WebHID device. getDevices() only returns
+            // devices that were already granted permission, so fall back to
+            // requestDevice() when this is the first connection.
             if ('hid' in navigator) {
                 try {
-                    const devices = await navigator.hid.getDevices();
-                    const device = devices.find(d => this.isDualSenseHidDevice(d));
+                    let devices = await navigator.hid.getDevices();
+                    let device = devices.find(d => this.isDualSenseHidDevice(d));
+
+                    if (!device) {
+                        const requested = await navigator.hid.requestDevice({
+                            filters: [{vendorId: 0x054c}]
+                        });
+                        device = (requested || []).find(d => this.isDualSenseHidDevice(d)) || null;
+                    }
+
                     if (device) {
                         if (!device.opened) await device.open();
                         this.setDualSenseHidDevice(device);
                     }
-                } catch (_) {}
+                } catch (error) {
+                    console.warn('Controller search failed:', error);
+                }
             }
+
             this.poll();
         }
 
@@ -624,37 +640,49 @@
 
         setDualSenseHidDevice(device) {
             if (!this.isDualSenseHidDevice(device)) return false;
+
             if (this.dualSenseHid && this.dualSenseInputListener) {
-                try { this.dualSenseHid.removeEventListener('inputreport', this.dualSenseInputListener); } catch (_) {}
+                try {
+                    this.dualSenseHid.removeEventListener('inputreport', this.dualSenseInputListener);
+                } catch (_) {}
             }
+
             this.dualSenseHid = device;
             this.dualSenseHardwareType = this.dualSenseHardwareTypeForDevice(device);
             this.dualSenseConnection = this.detectDualSenseTransport(device);
-
-            // Bluetooth DualSense: reading feature report 0x05 enables the full
-            // 0x31 input report (touchpad, motion, etc.) after the device opens.
-            if (this.dualSenseConnection === 'bluetooth' &&
-                typeof device.receiveFeatureReport === 'function') {
-                device.receiveFeatureReport(0x05).catch(() => {});
-            }
-
             this.dualSenseInputSeen = false;
+
+            // WebHID inputreport.data excludes the report ID. Listen directly
+            // on the HIDDevice and keep the report ID from the event itself.
             this.dualSenseInputListener = event => this.handleDualSenseInputReport(event);
             device.addEventListener('inputreport', this.dualSenseInputListener);
+
+            // Bluetooth DualSense starts with the short report 0x01. Reading
+            // feature report 0x05 switches it to the full 0x31 report.
+            if (this.dualSenseConnection === 'bluetooth' &&
+                typeof device.receiveFeatureReport === 'function') {
+                device.receiveFeatureReport(0x05).catch(error => {
+                    console.warn('Could not enable the DualSense Bluetooth full input report:', error);
+                });
+            }
+
             return true;
         }
 
         handleDualSenseInputReport(event) {
             if (!event || event.device !== this.dualSenseHid) return;
             const data = event.data;
-            if (!data || data.byteLength < 7) return;
+            if (!data || typeof data.getUint8 !== 'function') return;
+
             const reportId = Number(event.reportId);
             let buttons0, buttons1, buttons2, axes;
             let triggerL = 0, triggerR = 0;
 
-            if (reportId === 0x01 && data.byteLength === 63) {
-                // Full DualSense report 0x01. WebHID data excludes report ID.
-                // This layout is used over USB and by some Sony Bluetooth profiles.
+            // MDN specifies that HIDInputReportEvent.data excludes reportId.
+            // USB DualSense report 0x01 is 64 bytes including report ID, so
+            // WebHID provides 63 bytes here. Its data begins with X/Y/RX/RY,
+            // followed by L2/R2, a sequence byte, and the button bytes.
+            if (reportId === 0x01 && data.byteLength >= 63) {
                 axes = [
                     (data.getUint8(0) / 127.5) - 1,
                     (data.getUint8(1) / 127.5) - 1,
@@ -666,41 +694,36 @@
                 buttons0 = data.getUint8(7);
                 buttons1 = data.getUint8(8);
                 buttons2 = data.getUint8(9);
-            } else if (reportId === 0x31 && data.byteLength === 77) {
-                // Full Bluetooth report 0x31. WebHID data excludes report ID,
-                // so the Bluetooth header occupies data[0], then the common
-                // report begins at data[1].
+            } else if (reportId === 0x31 && data.byteLength >= 77) {
+                // Bluetooth report 0x31 is 78 bytes including report ID.
+                // WebHID removes that ID, leaving the Bluetooth header at
+                // data[0], axes at data[1..6], and buttons at data[8..10].
                 axes = [
                     (data.getUint8(1) / 127.5) - 1,
                     (data.getUint8(2) / 127.5) - 1,
                     (data.getUint8(3) / 127.5) - 1,
                     (data.getUint8(4) / 127.5) - 1
                 ];
-                // Full Bluetooth report 0x31: after the report sequence/header,
-                // L2 and R2 are the two analog trigger bytes immediately before
-                // the hat/button byte. WebHID data excludes the report ID.
                 triggerL = data.getUint8(5);
                 triggerR = data.getUint8(6);
                 buttons0 = data.getUint8(8);
                 buttons1 = data.getUint8(9);
                 buttons2 = data.getUint8(10);
-            } else if (reportId === 0x01 && data.byteLength === 9) {
-                // Bluetooth minimal report 0x01. It has no PS/Home or mute
-                // button; those become available when the full 0x31 report
-                // is enabled with feature report 0x05.
+            } else if (reportId === 0x01 && data.byteLength >= 9) {
+                // Bluetooth minimal report 0x01: sticks at data[0..3],
+                // buttons at data[4..6], and analog L2/R2 at data[7..8].
+                // The PS/mute bits are unavailable until report 0x31 is enabled.
                 axes = [
                     (data.getUint8(0) / 127.5) - 1,
                     (data.getUint8(1) / 127.5) - 1,
                     (data.getUint8(2) / 127.5) - 1,
                     (data.getUint8(3) / 127.5) - 1
                 ];
-                // Minimal Bluetooth report 0x01 does not contain analog
-                // trigger axes; those are only present in the full 0x31 report.
-                triggerL = 0;
-                triggerR = 0;
                 buttons0 = data.getUint8(4);
                 buttons1 = data.getUint8(5);
-                buttons2 = 0;
+                buttons2 = data.getUint8(6);
+                triggerL = data.getUint8(7);
+                triggerR = data.getUint8(8);
             } else {
                 return;
             }
