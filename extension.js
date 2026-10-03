@@ -32,7 +32,12 @@
             this.dualSenseLightColor = [255, 0, 0];
 
             // GitHub Pages audio playback state.
+            // Web Audio routes an HTMLMediaElement to the DualSense's USB
+            // audio endpoint. Bluetooth does not expose the controller speaker
+            // as a browser audio output.
             this.githubAudio = null;
+            this.githubAudioController = 0;
+            this.githubAudioDeviceId = '';
 
             // Persistent output state. Updating one feature must not erase the others.
             this.dualSenseTriggerMode = { L: 'Off', R: 'Off' };
@@ -299,6 +304,7 @@
                     '---',
                     { opcode: 'searchForNewControllers', blockType: Scratch.BlockType.COMMAND, text: 'Search for new controllers' },
                     { opcode: 'requestHID', blockType: Scratch.BlockType.COMMAND, text: 'Request HID' },
+                    { opcode: 'playControllerAudio', blockType: Scratch.BlockType.COMMAND, text: 'Play on controller [CONTROLLER] audio from GitHub Pages [URL]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, URL: { type: Scratch.ArgumentType.STRING, defaultValue: 'https://cubehub-studio.github.io/Controller-extension/audio.mp3' } } },
                     { opcode: 'connectDualSense', blockType: Scratch.BlockType.COMMAND, text: 'connect DualSense for lights' },
                     { opcode: 'dualSenseConnected', blockType: Scratch.BlockType.BOOLEAN, text: 'DualSense lights connected?' },
                     { opcode: 'setDualSenseLight', blockType: Scratch.BlockType.COMMAND, text: 'set DualSense light R [RED] G [GREEN] B [BLUE] [TRANSITION]', arguments: { RED: { type: Scratch.ArgumentType.NUMBER, defaultValue: 255 }, GREEN: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, BLUE: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, TRANSITION: { type: Scratch.ArgumentType.STRING, menu: 'lightTransition', defaultValue: 'Instant' } } },
@@ -390,6 +396,88 @@
                 } catch (_) {}
             }
             this.poll();
+        }
+
+        async findDualSenseAudioOutput(controllerNumber) {
+            if (!navigator.mediaDevices || typeof navigator.mediaDevices.enumerateDevices !== 'function') {
+                throw new Error('Browser audio output enumeration is unavailable.');
+            }
+
+            const n = Math.max(1, Math.floor(Number(controllerNumber) || 1));
+            const devices = await navigator.mediaDevices.enumerateDevices();
+
+            // Windows exposes a USB DualSense as an audio output. Chrome does
+            // not expose the HID device ID alongside MediaDeviceInfo, so for
+            // multiple controllers the controller number maps to the matching
+            // audio-output order. This is the most reliable browser-only
+            // association available without native Windows APIs.
+            const outputs = devices.filter(d => {
+                if (d.kind !== 'audiooutput') return false;
+                const label = String(d.label || '').toLowerCase();
+                return label.includes('wireless controller') ||
+                    label.includes('dualsense') ||
+                    label.includes('sony interactive entertainment');
+            });
+
+            return outputs[n - 1] || null;
+        }
+
+        async playControllerAudio(args) {
+            const controllerNumber = Math.max(1, Math.floor(Number(args.CONTROLLER) || 1));
+            let url = String(args.URL || '').trim();
+            if (!url) return;
+
+            // Accept a GitHub Pages URL directly. Also accept a normal GitHub
+            // repository/blob URL and convert it to the corresponding raw file
+            // URL when possible, so the block is convenient to use.
+            if (/^https?:\/\/github\.com\/[^/]+\/[^/]+\/blob\/[^/]+\//i.test(url)) {
+                url = url.replace(
+                    /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.*)$/i,
+                    'https://raw.githubusercontent.com/$1/$2/refs/heads/$3/$4'
+                );
+            }
+
+            try {
+                const output = await this.findDualSenseAudioOutput(controllerNumber);
+                if (!output) throw new Error('No matching DualSense audio output was found.');
+
+                if (this.githubAudio) {
+                    try {
+                        this.githubAudio.pause();
+                        this.githubAudio.removeAttribute('src');
+                        this.githubAudio.load();
+                    } catch (_) {}
+                }
+
+                const audio = new Audio();
+                audio.preload = 'auto';
+                audio.src = url;
+
+                // setSinkId routes the decoded audio directly to the selected
+                // Windows audio endpoint instead of the normal browser speaker.
+                if (typeof audio.setSinkId !== 'function') {
+                    throw new Error('This browser does not support audio output routing (setSinkId).');
+                }
+
+                await audio.setSinkId(output.deviceId);
+                audio.addEventListener('ended', () => {
+                    if (this.githubAudio === audio) {
+                        this.githubAudio = null;
+                        this.githubAudioDeviceId = '';
+                        this.githubAudioController = 0;
+                    }
+                });
+
+                this.githubAudio = audio;
+                this.githubAudioController = controllerNumber;
+                this.githubAudioDeviceId = output.deviceId;
+                await audio.play();
+            } catch (error) {
+                // Keep extension blocks non-fatal. The browser console still
+                // contains the exact reason if the output is unavailable,
+                // permission is missing, or the URL cannot be decoded.
+                console.warn('Controller audio playback failed:', error);
+            }
         }
 
         async requestHID() {
