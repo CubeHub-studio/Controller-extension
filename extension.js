@@ -300,7 +300,6 @@
                     { opcode: 'setDualSenseMuteLED', blockType: Scratch.BlockType.COMMAND, text: 'set DualSense mute LED [STATE]', arguments: { STATE: { type: Scratch.ArgumentType.STRING, menu: 'muteLEDStates', defaultValue: 'On' } } },
                     { opcode: 'dualSenseMuteLED', blockType: Scratch.BlockType.BOOLEAN, text: 'DualSense mute LED on?' },
                     { opcode: 'customAdaptiveTriggerEffect', blockType: Scratch.BlockType.COMMAND, text: 'Custom adaptive trigger controller [CONTROLLER] trigger [TRIGGER] mode [MODE] parameters [PARAMETERS]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, TRIGGER: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggers', defaultValue: 'L' }, MODE: { type: Scratch.ArgumentType.STRING, defaultValue: '0x21' }, PARAMETERS: { type: Scratch.ArgumentType.STRING, defaultValue: '255,255,255,255,255,255,0,0,0,0' } } },
-                    { opcode: 'adaptiveTriggerModeNumber', blockType: Scratch.BlockType.REPORTER, text: '[NUMBER] adaptive trigger mode', arguments: { NUMBER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 } } },
                     { opcode: 'setAdaptiveTriggerMode', blockType: Scratch.BlockType.COMMAND, text: 'set DualSense trigger [TRIGGER] mode to [MODE]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, TRIGGER: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggers', defaultValue: 'L' }, MODE: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggerModes', defaultValue: '1. Off' } } },
                     { opcode: 'adaptiveTriggerJammed', blockType: Scratch.BlockType.BOOLEAN, text: '[TRIGGER] trigger is jammed?', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, TRIGGER: { type: Scratch.ArgumentType.STRING, menu: 'adaptiveTriggers', defaultValue: 'L' } } }
                 ],
@@ -826,7 +825,7 @@
             effect[5] = (amplitudeZones >>> 16) & 0xFF;
             effect[6] = (amplitudeZones >>> 24) & 0xFF;
             // Parameter 7 is the actuation frequency.
-            effect[7] = frequency;
+            effect[9] = frequency;
         }
 
         setTriggerMultipleFeedback(effect, strengths) {
@@ -882,7 +881,7 @@
             effect[5] = (amplitudeZones >>> 16) & 0xFF;
             effect[6] = (amplitudeZones >>> 24) & 0xFF;
             // Parameter 7 is the actuation frequency.
-            effect[7] = Math.max(1, Math.min(255, Math.floor(frequency)));
+            effect[9] = Math.max(1, Math.min(255, Math.floor(frequency)));
         }
 
         adaptiveTriggerMode(mode) {
@@ -1040,7 +1039,7 @@
             const values = String(args.PARAMETERS ?? '')
                 .split(/[,\\s]+/)
                 .filter(Boolean)
-                .slice(0, 7);
+                .slice(0, 9);
 
             for (let i = 0; i < values.length; i++) {
                 effect[i + 1] = parseByte(values[i]);
