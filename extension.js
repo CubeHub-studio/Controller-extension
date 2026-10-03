@@ -38,6 +38,7 @@
             this.githubAudio = null;
             this.githubAudioController = 0;
             this.githubAudioDeviceId = '';
+            this.dualSenseAudioDeviceIds = new Map();
 
             // Persistent output state. Updating one feature must not erase the others.
             this.dualSenseTriggerMode = { L: 'Off', R: 'Off' };
