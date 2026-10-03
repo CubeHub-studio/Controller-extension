@@ -935,7 +935,7 @@
             const trigger = String(args.TRIGGER || 'L').toUpperCase() === 'R' ? 'R' : 'L';
             // The visible menu is numbered for creators (e.g. "1. Off"),
             // but the protocol mapping uses the unnumbered name internally.
-            const modeName = String(args.MODE || '1. Off').replace(/^\\d+\\.\\s*/, '');
+            const modeName = String(args.MODE || '1. Off').replace(/^\d+\.\s*/, '');
             const effect = new Uint8Array(8);
 
             switch (modeName) {
