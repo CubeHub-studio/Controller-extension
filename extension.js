@@ -25,6 +25,9 @@
             // WebHID DualSense state.
             this.dualSenseHid = null;
             this.dualSenseConnection = null;
+            // Exact Sony hardware model, determined from the HID product ID.
+            // 0x0CE6 = regular DualSense, 0x0DF2 = DualSense Edge.
+            this.dualSenseHardwareType = 'Unknown';
             this.dualSenseSequence = 0;
             this.dualSenseLightColor = [255, 0, 0];
 
@@ -345,8 +348,31 @@
             } catch (_) { return false; }
         }
 
+        dualSenseHardwareTypeForDevice(device) {
+            if (!device || Number(device.vendorId) !== 0x054c) return 'Unknown';
+
+            const pid = Number(device.productId);
+            if (pid === 0x0df2) return 'DualSense Edge';
+            if (pid === 0x0ce6) return 'DualSense';
+
+            // Keep a name fallback for future/revision PIDs.
+            const name = String(device.productName || '').toLowerCase();
+            if (name.includes('dualsense edge')) return 'DualSense Edge';
+            if (name.includes('dualsense')) return 'DualSense';
+
+            return 'Unknown';
+        }
+
+        isDualSenseEdge(device = this.dualSenseHid) {
+            return this.dualSenseHardwareTypeForDevice(device) === 'DualSense Edge';
+        }
+
         isDualSenseHidDevice(device) {
             if (!device || Number(device.vendorId) !== 0x054c) return false;
+
+            const type = this.dualSenseHardwareTypeForDevice(device);
+            if (type === 'DualSense Edge' || type === 'DualSense') return true;
+
             return (device.collections || []).some(c =>
                 Number(c.usagePage) === 0x0001 && Number(c.usage) === 0x0005
             );
@@ -358,6 +384,7 @@
                 try { this.dualSenseHid.removeEventListener('inputreport', this.dualSenseInputListener); } catch (_) {}
             }
             this.dualSenseHid = device;
+            this.dualSenseHardwareType = this.dualSenseHardwareTypeForDevice(device);
             this.dualSenseConnection = this.detectDualSenseTransport(device);
 
             // Bluetooth DualSense: reading feature report 0x05 enables the full
@@ -997,12 +1024,18 @@
                     this.setTriggerVibration(effect, 0, 5, 30);
                     break;
                 case 'Lock up':
-                    // Use the DualSense weapon/break-point effect rather than
-                    // continuous feedback. Zone 2 is the lock point (~20%).
-                    // The maximum weapon strength makes the actuator hold the
-                    // trigger against that stop instead of merely adding
-                    // uniform resistance.
-                    this.setTriggerWeapon(effect, 2, 8, 8);
+                    if (this.isDualSenseEdge()) {
+                        // DualSense Edge has a real mechanical L2/R2 stop.
+                        // The physical stop, not HID adaptive-trigger output,
+                        // limits trigger travel. Sony documents that the
+                        // short/medium stop positions disable trigger effects.
+                        effect[0] = 0x05;
+                    } else {
+                        // Regular DualSense has no mechanical trigger stop.
+                        // Use the strongest continuous resistance available,
+                        // starting immediately, for the hardest software wall.
+                        this.setTriggerFeedback(effect, 0, 8);
+                    }
                     break;
                 case 'Calibration':
                     effect[0] = 0x05;
