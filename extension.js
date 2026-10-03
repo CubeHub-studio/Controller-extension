@@ -31,6 +31,9 @@
             this.dualSenseSequence = 0;
             this.dualSenseLightColor = [255, 0, 0];
 
+            // GitHub Pages audio playback state.
+            this.githubAudio = null;
+
             // Persistent output state. Updating one feature must not erase the others.
             this.dualSenseTriggerMode = { L: 'Off', R: 'Off' };
 
@@ -292,6 +295,7 @@
                     { opcode: 'stickValue', blockType: Scratch.BlockType.REPORTER, text: 'controller [CONTROLLER] [STICK] [DIRECTION]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, STICK: { type: Scratch.ArgumentType.STRING, menu: 'sticks', defaultValue: 'Left stick' }, DIRECTION: { type: Scratch.ArgumentType.STRING, menu: 'directions', defaultValue: 'X' } } },
                     '---',
                     { opcode: 'rumble', blockType: Scratch.BlockType.COMMAND, text: 'rumble controller [CONTROLLER] for [DURATION] secs strength [STRENGTH]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, DURATION: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.2 }, STRENGTH: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 } } },
+                    { opcode: 'playGithubAudio', blockType: Scratch.BlockType.COMMAND, text: 'Play (github url) [URL]', arguments: { URL: { type: Scratch.ArgumentType.STRING, defaultValue: 'https://github.com/owner/repo/blob/main/audio.mp3' } } },
                     '---',
                     { opcode: 'searchForNewControllers', blockType: Scratch.BlockType.COMMAND, text: 'Search for new controllers' },
                     { opcode: 'requestHID', blockType: Scratch.BlockType.COMMAND, text: 'Request HID' },
@@ -319,6 +323,58 @@
                     ]
                 }
             };
+        }
+
+        githubPagesAudioUrl(input) {
+            let value = String(input || '').trim();
+            if (!value) return '';
+
+            // Accept a normal GitHub file URL:
+            // https://github.com/owner/repo/blob/main/path/audio.mp3
+            // and play the corresponding GitHub Pages project-site URL:
+            // https://owner.github.io/repo/path/audio.mp3
+            try {
+                const url = new URL(value);
+                if (url.hostname === 'github.com') {
+                    const parts = url.pathname.split('/').filter(Boolean);
+                    if (parts.length >= 5 && parts[2] === 'blob') {
+                        const owner = parts[0];
+                        const repo = parts[1];
+                        const branch = parts[3];
+                        const filePath = parts.slice(4).join('/');
+                        return 'https://' + owner + '.github.io/' + repo + '/' + filePath;
+                    }
+                }
+            } catch (_) {}
+
+            // Also allow a GitHub Pages URL to be entered directly.
+            return value;
+        }
+
+        async playGithubAudio(args) {
+            const url = this.githubPagesAudioUrl(args.URL);
+            if (!url || typeof Audio === 'undefined') return false;
+
+            try {
+                if (this.githubAudio) {
+                    this.githubAudio.pause();
+                    this.githubAudio.currentTime = 0;
+                }
+
+                const audio = new Audio();
+                audio.src = url;
+                audio.preload = 'auto';
+                audio.addEventListener('ended', () => {
+                    if (this.githubAudio === audio) this.githubAudio = null;
+                });
+
+                this.githubAudio = audio;
+                await audio.play();
+                return true;
+            } catch (_) {
+                if (this.githubAudio && this.githubAudio.src === url) this.githubAudio = null;
+                return false;
+            }
         }
 
         async searchForNewControllers() {
