@@ -305,7 +305,6 @@
                     { opcode: 'searchForNewControllers', blockType: Scratch.BlockType.COMMAND, text: 'Search for new controllers' },
                     { opcode: 'requestHID', blockType: Scratch.BlockType.COMMAND, text: 'Request HID' },
                     { opcode: 'playControllerAudio', blockType: Scratch.BlockType.COMMAND, text: 'Play on controller [CONTROLLER] audio from GitHub Pages [URL]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, URL: { type: Scratch.ArgumentType.STRING, defaultValue: 'https://cubehub-studio.github.io/Controller-extension/audio.mp3' } } },
-                    { opcode: 'playProjectSoundOnController', blockType: Scratch.BlockType.COMMAND, text: 'Play on controller [CONTROLLER] project sound [SOUND]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, SOUND: { type: Scratch.ArgumentType.STRING, menu: 'projectSounds', defaultValue: 'pop' } } },
                     { opcode: 'connectDualSense', blockType: Scratch.BlockType.COMMAND, text: 'connect DualSense for lights' },
                     { opcode: 'dualSenseConnected', blockType: Scratch.BlockType.BOOLEAN, text: 'DualSense lights connected?' },
                     { opcode: 'setDualSenseLight', blockType: Scratch.BlockType.COMMAND, text: 'set DualSense light R [RED] G [GREEN] B [BLUE] [TRANSITION]', arguments: { RED: { type: Scratch.ArgumentType.NUMBER, defaultValue: 255 }, GREEN: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, BLUE: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, TRANSITION: { type: Scratch.ArgumentType.STRING, menu: 'lightTransition', defaultValue: 'Instant' } } },
@@ -327,90 +326,9 @@
                         'Machine Gun / Automatic','Galloping','Pistol / Semi-Automatic',
                         'Rifle / Bow & Arrow','Choppy','Soft','Medium','Max',
                         'Pulse / Tension Guard','Rumble Transmission','Lock up'
-                    ],
-                    projectSounds: { acceptReporters: true, items: () => this.projectSoundNames() }
+                    ]
                 }
             };
-        }
-
-        projectSoundNames() {
-            try {
-                const runtime = Scratch.vm && Scratch.vm.runtime;
-                const targets = runtime && Array.isArray(runtime.targets) ? runtime.targets : [];
-                const names = [];
-                for (const target of targets) {
-                    const sounds = target && target.sprite && Array.isArray(target.sprite.sounds) ? target.sprite.sounds : [];
-                    for (const sound of sounds) {
-                        const name = String(sound && sound.name || '').trim();
-                        if (name && !names.includes(name)) names.push(name);
-                    }
-                }
-                return names.length ? names : ['pop'];
-            } catch (_) {
-                return ['pop'];
-            }
-        }
-
-        findProjectSound(soundName) {
-            const wanted = String(soundName || '').trim().toLowerCase();
-            const runtime = Scratch.vm && Scratch.vm.runtime;
-            const targets = runtime && Array.isArray(runtime.targets) ? runtime.targets : [];
-            for (const target of targets) {
-                const sounds = target && target.sprite && Array.isArray(target.sprite.sounds) ? target.sprite.sounds : [];
-                const sound = sounds.find(s => String(s && s.name || '').trim().toLowerCase() === wanted);
-                if (sound) return { target, sound };
-            }
-            return null;
-        }
-
-        async getProjectSoundBlob(sound) {
-            if (!sound) return null;
-            const format = String(sound.dataFormat || 'wav').toLowerCase();
-            const mime = format === 'mp3' ? 'audio/mpeg' :
-                format === 'ogg' || format === 'oga' ? 'audio/ogg' :
-                format === 'flac' ? 'audio/flac' :
-                format === 'm4a' ? 'audio/mp4' : 'audio/wav';
-
-            const data = sound.data;
-            if (data instanceof Blob) return data;
-            if (data instanceof ArrayBuffer) return new Blob([data], { type: mime });
-            if (ArrayBuffer.isView(data)) return new Blob([data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)], { type: mime });
-
-            const runtime = Scratch.vm && Scratch.vm.runtime;
-            const storage = runtime && runtime.storage;
-            if (storage && typeof storage.get === 'function' && sound.assetId) {
-                const candidates = [];
-                try {
-                    if (storage.AssetType && storage.AssetType.Sound !== undefined) candidates.push(storage.AssetType.Sound);
-                } catch (_) {}
-                candidates.push(format);
-
-                for (const assetType of candidates) {
-                    try {
-                        const asset = await Promise.resolve(storage.get(sound.assetId, assetType));
-                        if (!asset) continue;
-                        const assetData = asset.data || asset.buffer || asset;
-                        if (assetData instanceof Blob) return assetData;
-                        if (assetData instanceof ArrayBuffer) return new Blob([assetData], { type: mime });
-                        if (ArrayBuffer.isView(assetData)) return new Blob([assetData.buffer.slice(assetData.byteOffset, assetData.byteOffset + assetData.byteLength)], { type: mime });
-                    } catch (_) {}
-                }
-            }
-            return null;
-        }
-
-        async chooseDualSenseAudioOutput() {
-            if (!navigator.mediaDevices || typeof navigator.mediaDevices.selectAudioOutput !== 'function') return null;
-            try {
-                const selected = await navigator.mediaDevices.selectAudioOutput({
-                    deviceId: this.githubAudioDeviceId || undefined
-                });
-                if (selected && selected.deviceId) {
-                    this.githubAudioDeviceId = selected.deviceId;
-                    return selected;
-                }
-            } catch (_) {}
-            return null;
         }
 
         githubPagesAudioUrl(input) {
@@ -430,7 +348,7 @@
                         const repo = parts[1];
                         const branch = parts[3];
                         const filePath = parts.slice(4).join('/');
-                        return 'https://raw.githubusercontent.com/' + owner + '/' + repo + '/refs/heads/' + branch + '/' + filePath;
+                        return 'https://' + owner + '.github.io/' + repo + '/' + filePath;
                     }
                 }
             } catch (_) {}
@@ -480,13 +398,19 @@
             this.poll();
         }
 
-        async findDualSenseAudioOutput(controllerNumber, allowPrompt = true) {
+        async findDualSenseAudioOutput(controllerNumber) {
             if (!navigator.mediaDevices || typeof navigator.mediaDevices.enumerateDevices !== 'function') {
                 throw new Error('Browser audio output enumeration is unavailable.');
             }
 
             const n = Math.max(1, Math.floor(Number(controllerNumber) || 1));
             const devices = await navigator.mediaDevices.enumerateDevices();
+
+            // Windows exposes a USB DualSense as an audio output. Chrome does
+            // not expose the HID device ID alongside MediaDeviceInfo, so for
+            // multiple controllers the controller number maps to the matching
+            // audio-output order. This is the most reliable browser-only
+            // association available without native Windows APIs.
             const outputs = devices.filter(d => {
                 if (d.kind !== 'audiooutput') return false;
                 const label = String(d.label || '').toLowerCase();
@@ -495,88 +419,278 @@
                     label.includes('sony interactive entertainment');
             });
 
-            if (this.githubAudioDeviceId) {
-                const remembered = outputs.find(d => d.deviceId === this.githubAudioDeviceId);
-                if (remembered) return remembered;
-            }
-            if (outputs[n - 1]) return outputs[n - 1];
-
-            if (allowPrompt) return this.chooseDualSenseAudioOutput();
-            return null;
+            return outputs[n - 1] || null;
         }
 
         async playControllerAudio(args) {
             const controllerNumber = Math.max(1, Math.floor(Number(args.CONTROLLER) || 1));
-            const url = this.githubPagesAudioUrl(args.URL);
-            if (!url || typeof Audio === 'undefined') return false;
+            let url = String(args.URL || '').trim();
+            if (!url) return;
+
+            // Accept a GitHub Pages URL directly. Also accept a normal GitHub
+            // repository/blob URL and convert it to the corresponding raw file
+            // URL when possible, so the block is convenient to use.
+            if (/^https?:\/\/github\.com\/[^/]+\/[^/]+\/blob\/[^/]+\//i.test(url)) {
+                url = url.replace(
+                    /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.*)$/i,
+                    'https://raw.githubusercontent.com/$1/$2/refs/heads/$3/$4'
+                );
+            }
 
             try {
-                const output = await this.findDualSenseAudioOutput(controllerNumber, true);
-                if (!output) throw new Error('No DualSense audio output selected.');
+                const output = await this.findDualSenseAudioOutput(controllerNumber);
+                if (!output) throw new Error('No matching DualSense audio output was found.');
 
                 if (this.githubAudio) {
-                    try { this.githubAudio.pause(); this.githubAudio.removeAttribute('src'); this.githubAudio.load(); } catch (_) {}
+                    try {
+                        this.githubAudio.pause();
+                        this.githubAudio.removeAttribute('src');
+                        this.githubAudio.load();
+                    } catch (_) {}
                 }
 
                 const audio = new Audio();
                 audio.preload = 'auto';
                 audio.src = url;
-                if (typeof audio.setSinkId !== 'function') throw new Error('This browser does not support audio output routing (setSinkId).');
 
-                await audio.setSinkId(output.deviceId);
-                audio.addEventListener('ended', () => {
-                    if (this.githubAudio === audio) this.githubAudio = null;
-                });
-                this.githubAudio = audio;
-                this.githubAudioController = controllerNumber;
-                this.githubAudioDeviceId = output.deviceId;
-                await audio.play();
-                return true;
-            } catch (error) {
-                console.warn('Controller audio playback failed:', error);
-                return false;
-            }
-        }
-
-        async playProjectSoundOnController(args) {
-            const controllerNumber = Math.max(1, Math.floor(Number(args.CONTROLLER) || 1));
-            const found = this.findProjectSound(args.SOUND);
-            if (!found) return false;
-
-            try {
-                const output = await this.findDualSenseAudioOutput(controllerNumber, true);
-                if (!output) throw new Error('No DualSense audio output selected.');
-
-                const blob = await this.getProjectSoundBlob(found.sound);
-                if (!blob) throw new Error('The project sound data is not available.');
-
-                if (this.githubAudio) {
-                    try { this.githubAudio.pause(); this.githubAudio.removeAttribute('src'); this.githubAudio.load(); } catch (_) {}
-                }
-
-                const objectUrl = URL.createObjectURL(blob);
-                const audio = new Audio();
-                audio.preload = 'auto';
-                audio.src = objectUrl;
+                // setSinkId routes the decoded audio directly to the selected
+                // Windows audio endpoint instead of the normal browser speaker.
                 if (typeof audio.setSinkId !== 'function') {
-                    URL.revokeObjectURL(objectUrl);
                     throw new Error('This browser does not support audio output routing (setSinkId).');
                 }
 
                 await audio.setSinkId(output.deviceId);
                 audio.addEventListener('ended', () => {
-                    URL.revokeObjectURL(objectUrl);
-                    if (this.githubAudio === audio) this.githubAudio = null;
+                    if (this.githubAudio === audio) {
+                        this.githubAudio = null;
+                        this.githubAudioDeviceId = '';
+                        this.githubAudioController = 0;
+                    }
                 });
+
                 this.githubAudio = audio;
                 this.githubAudioController = controllerNumber;
                 this.githubAudioDeviceId = output.deviceId;
                 await audio.play();
-                return true;
             } catch (error) {
-                console.warn('Project sound playback on DualSense failed:', error);
-                return false;
+                // Keep extension blocks non-fatal. The browser console still
+                // contains the exact reason if the output is unavailable,
+                // permission is missing, or the URL cannot be decoded.
+                console.warn('Controller audio playback failed:', error);
             }
+        }
+
+        async requestHID() {
+            if (!('hid' in navigator)) return false;
+            try {
+                const devices = await navigator.hid.requestDevice({ filters: [{ vendorId: 0x054c }] });
+                const device = devices && devices[0];
+                if (!device) return false;
+                if (!device.opened) await device.open();
+                this.setDualSenseHidDevice(device);
+                return true;
+            } catch (_) { return false; }
+        }
+
+        dualSenseHardwareTypeForDevice(device) {
+            if (!device || Number(device.vendorId) !== 0x054c) return 'Unknown';
+
+            const pid = Number(device.productId);
+            if (pid === 0x0df2) return 'DualSense Edge';
+            if (pid === 0x0ce6) return 'DualSense';
+
+            // Keep a name fallback for future/revision PIDs.
+            const name = String(device.productName || '').toLowerCase();
+            if (name.includes('dualsense edge')) return 'DualSense Edge';
+            if (name.includes('dualsense')) return 'DualSense';
+
+            return 'Unknown';
+        }
+
+        isDualSenseEdge(device = this.dualSenseHid) {
+            return this.dualSenseHardwareTypeForDevice(device) === 'DualSense Edge';
+        }
+
+        isDualSenseHidDevice(device) {
+            if (!device || Number(device.vendorId) !== 0x054c) return false;
+
+            const type = this.dualSenseHardwareTypeForDevice(device);
+            if (type === 'DualSense Edge' || type === 'DualSense') return true;
+
+            return (device.collections || []).some(c =>
+                Number(c.usagePage) === 0x0001 && Number(c.usage) === 0x0005
+            );
+        }
+
+        setDualSenseHidDevice(device) {
+            if (!this.isDualSenseHidDevice(device)) return false;
+            if (this.dualSenseHid && this.dualSenseInputListener) {
+                try { this.dualSenseHid.removeEventListener('inputreport', this.dualSenseInputListener); } catch (_) {}
+            }
+            this.dualSenseHid = device;
+            this.dualSenseHardwareType = this.dualSenseHardwareTypeForDevice(device);
+            this.dualSenseConnection = this.detectDualSenseTransport(device);
+
+            // Bluetooth DualSense: reading feature report 0x05 enables the full
+            // 0x31 input report (touchpad, motion, etc.) after the device opens.
+            if (this.dualSenseConnection === 'bluetooth' &&
+                typeof device.receiveFeatureReport === 'function') {
+                device.receiveFeatureReport(0x05).catch(() => {});
+            }
+
+            this.dualSenseInputSeen = false;
+            this.dualSenseInputListener = event => this.handleDualSenseInputReport(event);
+            device.addEventListener('inputreport', this.dualSenseInputListener);
+            return true;
+        }
+
+        handleDualSenseInputReport(event) {
+            if (!event || event.device !== this.dualSenseHid) return;
+            const data = event.data;
+            if (!data || data.byteLength < 7) return;
+            const reportId = Number(event.reportId);
+            let buttons0, buttons1, buttons2, axes;
+            let triggerL = 0, triggerR = 0;
+
+            if (reportId === 0x01 && data.byteLength === 63) {
+                // Full DualSense report 0x01. WebHID data excludes report ID.
+                // This layout is used over USB and by some Sony Bluetooth profiles.
+                axes = [
+                    (data.getUint8(0) / 127.5) - 1,
+                    (data.getUint8(1) / 127.5) - 1,
+                    (data.getUint8(2) / 127.5) - 1,
+                    (data.getUint8(3) / 127.5) - 1
+                ];
+                triggerL = data.getUint8(4);
+                triggerR = data.getUint8(5);
+                buttons0 = data.getUint8(7);
+                buttons1 = data.getUint8(8);
+                buttons2 = data.getUint8(9);
+            } else if (reportId === 0x31 && data.byteLength === 77) {
+                // Full Bluetooth report 0x31. WebHID data excludes report ID,
+                // so the Bluetooth header occupies data[0], then the common
+                // report begins at data[1].
+                axes = [
+                    (data.getUint8(1) / 127.5) - 1,
+                    (data.getUint8(2) / 127.5) - 1,
+                    (data.getUint8(3) / 127.5) - 1,
+                    (data.getUint8(4) / 127.5) - 1
+                ];
+                // Full Bluetooth report 0x31: after the report sequence/header,
+                // L2 and R2 are the two analog trigger bytes immediately before
+                // the hat/button byte. WebHID data excludes the report ID.
+                triggerL = data.getUint8(5);
+                triggerR = data.getUint8(6);
+                buttons0 = data.getUint8(8);
+                buttons1 = data.getUint8(9);
+                buttons2 = data.getUint8(10);
+            } else if (reportId === 0x01 && data.byteLength === 9) {
+                // Bluetooth minimal report 0x01. It has no PS/Home or mute
+                // button; those become available when the full 0x31 report
+                // is enabled with feature report 0x05.
+                axes = [
+                    (data.getUint8(0) / 127.5) - 1,
+                    (data.getUint8(1) / 127.5) - 1,
+                    (data.getUint8(2) / 127.5) - 1,
+                    (data.getUint8(3) / 127.5) - 1
+                ];
+                // Minimal Bluetooth report 0x01 does not contain analog
+                // trigger axes; those are only present in the full 0x31 report.
+                triggerL = 0;
+                triggerR = 0;
+                buttons0 = data.getUint8(4);
+                buttons1 = data.getUint8(5);
+                buttons2 = 0;
+            } else {
+                return;
+            }
+
+            const dpad = buttons0 & 0x0F;
+            const next = [
+                !!(buttons0 & 0x20), !!(buttons0 & 0x40), !!(buttons0 & 0x10), !!(buttons0 & 0x80),
+                !!(buttons1 & 0x01), !!(buttons1 & 0x02), !!(buttons1 & 0x04), !!(buttons1 & 0x08),
+                !!(buttons1 & 0x10), !!(buttons1 & 0x20), !!(buttons1 & 0x40), !!(buttons1 & 0x80),
+                dpad === 0 || dpad === 1 || dpad === 7, dpad === 3 || dpad === 4 || dpad === 5,
+                dpad === 5 || dpad === 6 || dpad === 7, dpad === 1 || dpad === 2 || dpad === 3,
+                !!(buttons2 & 0x01), !!(buttons2 & 0x02), !!(buttons2 & 0x04)
+            ];
+
+            const touchOffset = reportId === 0x31 ? 33 : 32;
+            let touchX = 0, touchY = 0, touchActive = false;
+            if (data.byteLength >= touchOffset + 4) {
+                const contact = data.getUint8(touchOffset);
+                if ((contact & 0x80) === 0) {
+                    touchX = data.getUint8(touchOffset + 1) | ((data.getUint8(touchOffset + 2) & 0x0F) << 8);
+                    touchY = ((data.getUint8(touchOffset + 2) >> 4) & 0x0F) | (data.getUint8(touchOffset + 3) << 4);
+                    touchActive = true;
+                }
+            }
+
+            this.dualSenseRawPreviousButtons = this.dualSenseRawButtons.slice();
+            this.dualSenseRawButtons = next;
+            this.dualSenseRawAxes = axes.map(v => Math.max(-1, Math.min(1, v)));
+            this.dualSenseTouchX = touchX;
+            this.dualSenseTouchY = touchY;
+            this.dualSenseTouchTouched = touchActive;
+            this.dualSenseTriggerPressure = { L: triggerL, R: triggerR };
+            this.dualSenseInputSeen = true;
+            this.previousButtons.set(this.dualSenseSyntheticIndex, this.dualSenseRawPreviousButtons.slice());
+            this.currentButtons.set(this.dualSenseSyntheticIndex, this.dualSenseRawButtons.slice());
+        }
+
+        controllerCount() { return this.getPads().length; }
+        controllerName(args) { const p=this.getPad(args.CONTROLLER); return p ? String(p.id||'') : ''; }
+        controllerTypeBlock(args) { const p=this.getPad(args.CONTROLLER); return this.controllerType(p); }
+        buttonName(args) {
+            const p=this.getPad(args.CONTROLLER); const i=Math.max(0,Math.floor(Number(args.BUTTON)||1)-1); if(!p) return '';
+            const names=this.controllerType(p)==='PlayStation' ? ['Cross','Circle','Square','Triangle','L1','R1','L2','R2','Create / Share','Options','L3','R3','DPad Up','DPad Down','DPad Left','DPad Right','Guide / PS','Touchpad','Mute'] : ['A','B','X','Y','LB','RB','LT','RT','View / Back','Menu / Start','LS','RS','DPad Up','DPad Down','DPad Left','DPad Right','Xbox Guide','Extra'];
+            return names[i] || ('Button ' + (i+1));
+        }
+        controllerMapping(args) { const p=this.getPad(args.CONTROLLER); return p ? (p.mapping||'') : ''; }
+        buttonPressed(args) { return this.getButtonState(this.getPad(args.CONTROLLER),this.buttonIndex(args.BUTTON)); }
+        buttonJustPressed(args) { const p=this.getPad(args.CONTROLLER), i=this.buttonIndex(args.BUTTON); if(!p||i<0)return false; return this.getButtonState(p,i) && !((this.previousButtons.get(p.index)||[])[i]); }
+        buttonValue(args) { return this.getButtonValue(this.getPad(args.CONTROLLER),this.buttonIndex(args.BUTTON)); }
+        anyButtonPressed(args) { const p=this.getPad(args.CONTROLLER); return p ? (this.currentButtons.get(p.index)||[]).some(Boolean) : false; }
+        touchpadX(args) { const p=this.getPad(args.CONTROLLER); return !p||this.controllerType(p)!=='PlayStation' ? 0 : (this.dualSenseTouchX/1919)*480-240; }
+        touchpadY(args) { const p=this.getPad(args.CONTROLLER); return !p||this.controllerType(p)!=='PlayStation' ? 0 : 180-(this.dualSenseTouchY/1079)*360; }
+        touchpadTouched(args) { const p=this.getPad(args.CONTROLLER); return !!(p&&this.controllerType(p)==='PlayStation'&&this.dualSenseTouchTouched); }
+        triggerPressure(args) {
+            const p = this.getPad(args.CONTROLLER);
+            if (!p) return 0;
+            const trigger = String(args.TRIGGER || 'L').toUpperCase() === 'R' ? 'R' : 'L';
+            if (this.controllerType(p) === 'PlayStation' && this.dualSenseInputSeen) {
+                return this.dualSenseTriggerPressure[trigger];
+            }
+            const index = trigger === 'R' ? 7 : 6;
+            const button = p.buttons && p.buttons[index];
+            return Math.round(this.readButtonValue(button) * 255);
+        }
+        axisValue(args) {
+            const p=this.getPad(args.CONTROLLER);
+            const n=Math.max(1,Math.floor(Number(args.AXIS)||1))-1;
+            if(!p) return 0;
+            if(this.controllerType(p)==='PlayStation' && this.dualSenseInputSeen && Number.isFinite(this.dualSenseRawAxes[n])) {
+                return this.dualSenseRawAxes[n];
+            }
+            return Number.isFinite(p.axes[n]) ? p.axes[n] : 0;
+        }
+        stickValue(args) {
+            const p=this.getPad(args.CONTROLLER);
+            if(!p) return 0;
+            const right=String(args.STICK).toLowerCase().startsWith('right');
+            const y=String(args.DIRECTION).toUpperCase()==='Y';
+            const axis=(right?2:0)+(y?1:0);
+            if(this.controllerType(p)==='PlayStation' && this.dualSenseInputSeen && Number.isFinite(this.dualSenseRawAxes[axis])) {
+                return this.dualSenseRawAxes[axis];
+            }
+            return Number.isFinite(p.axes[axis]) ? p.axes[axis] : 0;
+        }
+
+        async rumble(args) {
+            const duration=Math.max(0,Math.min(10000,Number(args.DURATION)*1000||0)), strength=Math.max(0,Math.min(1,Number(args.STRENGTH)));
+            if(await this.requireDualSenseHidForTriggers()){ await this.sendDualSenseRumble(strength,duration); if(duration>0)setTimeout(()=>this.sendDualSenseRumble(0,0),duration); return; }
+            const p=this.getPad(args.CONTROLLER); if(!p)return; const actuator=p.vibrationActuator||(Array.isArray(p.hapticActuators)?p.hapticActuators[0]:null); if(!actuator)return;
+            try { if(Array.isArray(actuator.effects)&&actuator.effects.includes('dual-rumble')&&typeof actuator.playEffect==='function') await actuator.playEffect('dual-rumble',{startDelay:0,duration,weakMagnitude:strength,strongMagnitude:strength}); else if(typeof actuator.pulse==='function') await actuator.pulse(strength,duration); } catch(_){ }
         }
 
         async connectDualSense() {
