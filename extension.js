@@ -710,8 +710,9 @@
         // DualSense adaptive-trigger effects use an 8-byte block:
         // [mode, parameter1..parameter7]. These values follow the
         // WebHID DualSense Explorer reference implementation.
-        writeTriggerFeedback(effect) {
-            effect.fill(0);
+        writeTriggerFeedback(effect, trigger) {
+            const offset = trigger === 'R' ? 10 : 20;
+            for (let i = 0; i < 10; i++) effect[offset + i] = 0;
         }
 
         setTriggerFeedback(effect, position, strength) {
@@ -824,7 +825,6 @@
             effect[4] = (amplitudeZones >>> 8) & 0xFF;
             effect[5] = (amplitudeZones >>> 16) & 0xFF;
             effect[6] = (amplitudeZones >>> 24) & 0xFF;
-            // Parameter 7 is the actuation frequency.
             effect[9] = frequency;
         }
 
@@ -880,7 +880,6 @@
             effect[4] = (amplitudeZones >>> 8) & 0xFF;
             effect[5] = (amplitudeZones >>> 16) & 0xFF;
             effect[6] = (amplitudeZones >>> 24) & 0xFF;
-            // Parameter 7 is the actuation frequency.
             effect[9] = Math.max(1, Math.min(255, Math.floor(frequency)));
         }
 
@@ -918,8 +917,6 @@
             if (!controller || this.controllerType(controller) !== 'PlayStation') return false;
 
             const trigger = String(args.TRIGGER || 'L').toUpperCase() === 'R' ? 'R' : 'L';
-            // The visible menu is numbered for creators (e.g. "1. Off"),
-            // but the protocol mapping uses the unnumbered name internally.
             const modeName = String(args.MODE || 'Off');
             const effect = new Uint8Array(10);
 
@@ -973,7 +970,7 @@
                     effect[6] = 0x3F;
                     effect[7] = 0x00;
                     effect[8] = 0x00;
-                    effect[7] = 10;
+                    effect[9] = 10;
                     break;
                 case 'Choppy':
                     effect[0] = 0x21;
@@ -985,13 +982,13 @@
                     effect[6] = 0x26;
                     break;
                 case 'Soft':
-                    this.setTriggerFeedback(effect, 0, 2);
+                    this.setSimpleFeedback(effect, 0x00, 0x00);
                     break;
                 case 'Medium':
-                    this.setTriggerFeedback(effect, 0, 5);
+                    this.setSimpleFeedback(effect, 0x00, 0x64);
                     break;
                 case 'Max':
-                    this.setTriggerFeedback(effect, 0, 8);
+                    this.setSimpleFeedback(effect, 0x00, 0xDC);
                     break;
                 case 'Pulse / Tension Guard':
                     this.setSimpleFeedback(effect, 0x55, 0x64);
@@ -1000,10 +997,11 @@
                     this.setTriggerVibration(effect, 0, 5, 30);
                     break;
                 case 'Lock up':
-                    // Maximum continuous resistance starting immediately.
-                    // This creates a firm virtual wall; it cannot physically
-                    // prevent the trigger from moving all the way down.
-                    this.setTriggerFeedback(effect, 0, 8);
+                    // Start maximum feedback at zone 2 (~20% trigger travel).
+                    // This is the closest software equivalent to a trigger lock
+                    // on a standard DualSense; the actuator cannot create a
+                    // literal mechanical stop.
+                    this.setTriggerFeedback(effect, 2, 8);
                     break;
                 case 'Calibration':
                     effect[0] = 0x05;
@@ -1014,12 +1012,6 @@
             }
             this.dualSenseTriggerMode[trigger] = modeName;
             return this.sendDualSenseTriggerOutput(trigger, effect);
-        }
-
-        adaptiveTriggerJammed(args) {
-            const trigger = String(args.TRIGGER || 'L').toUpperCase() === 'R' ? 'R' : 'L';
-            const controller = this.getPad(args.CONTROLLER);
-            return !!(controller && this.controllerType(controller) === 'PlayStation' && this.dualSenseTriggerMode[trigger] === 'Lock up');
         }
 
 
@@ -1034,33 +1026,69 @@
                 return Number.isFinite(n) ? Math.max(0, Math.min(255, Math.floor(n))) : 0;
             };
 
-            const effect = new Uint8Array(10);
+            const effect = new Uint8Array(8);
             effect[0] = parseByte(args.MODE);
             const values = String(args.PARAMETERS ?? '')
                 .split(/[,\\s]+/)
                 .filter(Boolean)
-                .slice(0, 9);
+                .slice(0, 7);
 
             for (let i = 0; i < values.length; i++) {
                 effect[i + 1] = parseByte(values[i]);
             }
 
-            this.dualSenseTriggerMode[trigger] = 'Custom';
             return this.sendDualSenseTriggerOutput(trigger, effect);
         }
+
 
         async sendDualSenseTriggerOutput(trigger, effect) {
             if (!this.dualSenseConnected()) return false;
 
-            // Adaptive trigger effects are part of the same main output report
-            // as rumble, mute LED, player LEDs, and the lightbar. Store the
-            // effect in the unified state object so one feature cannot erase
-            // another feature's bytes.
-            const target = trigger === 'R' ? this.dualSenseOutput.r2Effect : this.dualSenseOutput.l2Effect;
-            target.fill(0);
-            target.set(effect.subarray(0, 10));
+            try {
+                let reportId;
+                let data;
+                let common;
 
-            return this.sendDualSenseOutput();
+                if (this.dualSenseConnection === 'bluetooth') {
+                    reportId = 0x31;
+                    data = new Uint8Array(77);
+                    data[0] = (this.dualSenseSequence & 0x0F) << 4;
+                    data[1] = 0x10;
+                    this.dualSenseSequence = (this.dualSenseSequence + 1) & 0x0F;
+                    common = data.subarray(2, 49);
+                } else {
+                    reportId = 0x02;
+                    data = new Uint8Array(47);
+                    common = data;
+                }
+
+                // IMPORTANT: adaptive-trigger output must not enable the
+                // compatibility-rumble bits in valid_flag0. Those bits can
+                // route the controller into the old vibration path and prevent
+                // the adaptive trigger actuators from responding.
+                common[0] = trigger === 'R' ? 0x04 : 0x08;
+
+                // WebHID strips the report ID from event data, and our Bluetooth
+                // output buffer begins at the sequence byte. The DualSense
+                // Bluetooth trigger fields are at common[10..19] (R2) and
+                // common[23..32] (L2). USB uses common[10..19] and
+                // common[21..30].
+                const offset = trigger === 'R'
+                    ? 10
+                    : (this.dualSenseConnection === 'bluetooth' ? 23 : 21);
+                for (let i = 0; i < 10; i++) {
+                    common[offset + i] = effect[i] || 0;
+                }
+
+                if (this.dualSenseConnection === 'bluetooth') {
+                    this.fillBluetoothChecksum(reportId, data);
+                }
+
+                await this.dualSenseHid.sendReport(reportId, data);
+                return true;
+            } catch (_) {
+                return false;
+            }
         }
 
 
