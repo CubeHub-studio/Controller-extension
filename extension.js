@@ -39,6 +39,9 @@
             this.githubAudioController = 0;
             this.githubAudioDeviceId = '';
             this.dualSenseAudioDeviceIds = new Map();
+            this.dualSenseAudioConnected = false;
+            this.dualSenseAudioDeviceLabel = '';
+            this.dualSenseAudioError = '';
 
             // Persistent output state. Updating one feature must not erase the others.
             this.dualSenseTriggerMode = { L: 'Off', R: 'Off' };
@@ -307,6 +310,8 @@
                     { opcode: 'requestHID', blockType: Scratch.BlockType.COMMAND, text: 'Request HID' },
                     { opcode: 'playControllerAudio', blockType: Scratch.BlockType.COMMAND, text: 'Play on controller [CONTROLLER] audio from GitHub Pages [URL]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, URL: { type: Scratch.ArgumentType.STRING, defaultValue: 'https://cubehub-studio.github.io/Controller-extension/audio.mp3' } } },
                     { opcode: 'enableDualSenseAudio', blockType: Scratch.BlockType.COMMAND, text: 'Enable DualSense audio output', arguments: {} },
+                    { opcode: 'dualSenseAudioConnected', blockType: Scratch.BlockType.BOOLEAN, text: 'DualSense audio connected?' },
+                    { opcode: 'dualSenseAudioDevice', blockType: Scratch.BlockType.REPORTER, text: 'DualSense audio device' },
                     { opcode: 'playProjectSoundOnController', blockType: Scratch.BlockType.COMMAND, text: 'Play on controller [CONTROLLER] project sound [SOUND]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, SOUND: { type: Scratch.ArgumentType.STRING, defaultValue: '1' } } },
                     { opcode: 'connectDualSense', blockType: Scratch.BlockType.COMMAND, text: 'connect DualSense for lights' },
                     { opcode: 'dualSenseConnected', blockType: Scratch.BlockType.BOOLEAN, text: 'DualSense lights connected?' },
@@ -417,28 +422,125 @@
             this.poll();
         }
 
+        isDualSenseAudioOutput(device) {
+            if (!device || device.kind !== 'audiooutput') return false;
+            const label = String(device.label || '').toLowerCase();
+            return label.includes('dualsense') ||
+                label.includes('wireless controller') ||
+                label.includes('sony interactive entertainment');
+        }
+
         async findDualSenseAudioOutput(controllerNumber) {
-            if (!navigator.mediaDevices || typeof navigator.mediaDevices.enumerateDevices !== 'function') {
+            if (!navigator.mediaDevices ||
+                typeof navigator.mediaDevices.enumerateDevices !== 'function') {
                 throw new Error('Browser audio output enumeration is unavailable.');
             }
 
             const n = Math.max(1, Math.floor(Number(controllerNumber) || 1));
             const devices = await navigator.mediaDevices.enumerateDevices();
 
-            // Windows exposes a USB DualSense as an audio output. Chrome does
-            // not expose the HID device ID alongside MediaDeviceInfo, so for
-            // multiple controllers the controller number maps to the matching
-            // audio-output order. This is the most reliable browser-only
-            // association available without native Windows APIs.
-            const outputs = devices.filter(d => {
-                if (d.kind !== 'audiooutput') return false;
-                const label = String(d.label || '').toLowerCase();
-                return label.includes('wireless controller') ||
-                    label.includes('dualsense') ||
-                    label.includes('sony interactive entertainment');
-            });
+            const outputs = devices.filter(device => this.isDualSenseAudioOutput(device));
+
+            // Prefer a device explicitly selected by Enable DualSense audio output.
+            if (n === this.githubAudioController && this.githubAudioDeviceId) {
+                const selected = outputs.find(device => device.deviceId === this.githubAudioDeviceId);
+                if (selected) return selected;
+            }
 
             return outputs[n - 1] || null;
+        }
+
+        async enableDualSenseAudio() {
+            this.dualSenseAudioError = '';
+            this.dualSenseAudioConnected = false;
+            this.dualSenseAudioDeviceLabel = '';
+
+            if (!navigator.mediaDevices ||
+                typeof navigator.mediaDevices.enumerateDevices !== 'function') {
+                this.dualSenseAudioError = 'Browser audio output APIs are unavailable.';
+                console.warn(this.dualSenseAudioError);
+                return false;
+            }
+
+            try {
+                // First use an already-authorized DualSense output. This avoids
+                // opening the microphone permission dialog when Chrome already
+                // knows about the controller speaker.
+                let devices = await navigator.mediaDevices.enumerateDevices();
+                let outputs = devices.filter(device => this.isDualSenseAudioOutput(device));
+
+                // Chrome may hide audio outputs until the page has output
+                // permission. Newer Chromium exposes selectAudioOutput(), which
+                // grants permission without asking for microphone access.
+                if (!outputs.length &&
+                    typeof navigator.mediaDevices.selectAudioOutput === 'function') {
+                    try {
+                        const selected = await navigator.mediaDevices.selectAudioOutput();
+                        if (this.isDualSenseAudioOutput(selected)) {
+                            outputs = [selected];
+                        } else {
+                            this.dualSenseAudioError =
+                                'Select the DualSense/Wireless Controller audio device in the browser prompt.';
+                            console.warn(this.dualSenseAudioError);
+                            return false;
+                        }
+                    } catch (error) {
+                        // The API requires a transient user activation. If this
+                        // block was started without one, fall through to the
+                        // legacy permission path below.
+                        console.warn('Audio output selection was not available:', error);
+                    }
+                }
+
+                // Legacy Chromium path: microphone permission from the same
+                // device group can grant permission to enumerate its output.
+                if (!outputs.length &&
+                    typeof navigator.mediaDevices.getUserMedia === 'function') {
+                    let stream = null;
+                    try {
+                        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        devices = await navigator.mediaDevices.enumerateDevices();
+                        outputs = devices.filter(device => this.isDualSenseAudioOutput(device));
+                    } finally {
+                        if (stream) {
+                            stream.getTracks().forEach(track => track.stop());
+                        }
+                    }
+                }
+
+                if (!outputs.length) {
+                    this.dualSenseAudioError =
+                        'Chrome did not expose a DualSense audio output. Connect the controller by USB and make sure Windows lists its speaker/headset output.';
+                    console.warn(this.dualSenseAudioError);
+                    return false;
+                }
+
+                this.dualSenseAudioDeviceIds.clear();
+                outputs.forEach((device, index) => {
+                    this.dualSenseAudioDeviceIds.set(index + 1, device.deviceId);
+                });
+
+                const output = outputs[0];
+                this.githubAudioDeviceId = output.deviceId;
+                this.githubAudioController = 1;
+                this.dualSenseAudioDeviceLabel = String(output.label || 'DualSense audio output');
+                this.dualSenseAudioConnected = true;
+                return true;
+            } catch (error) {
+                this.dualSenseAudioError = error && error.message
+                    ? error.message
+                    : String(error || 'Unknown audio connection error');
+                console.warn('Could not enable DualSense audio output:', error);
+                return false;
+            }
+        }
+
+        dualSenseAudioConnected() {
+            return !!this.dualSenseAudioConnected;
+        }
+
+        dualSenseAudioDevice() {
+            return this.dualSenseAudioDeviceLabel || '';
         }
 
         async playControllerAudio(args) {
