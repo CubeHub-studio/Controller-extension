@@ -1,4 +1,4 @@
-name: One-time DualSense touchpad LED update
+name: One-time DualSense input and touchpad update
 
 on:
   push:
@@ -12,70 +12,83 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Add touchpad LED controls
+      - name: Fix DualSense input parser
         shell: python
         run: |
           from pathlib import Path
-
-          p = Path("extension.js")
+          p = Path('extension.js')
           s = p.read_text()
+          start = s.find('        handleDualSenseInputReport(event) {')
+          end = s.find('\n        controllerCount()', start)
+          if start < 0 or end < 0:
+              raise SystemExit('DualSense input method boundaries not found')
+          method = r'''        handleDualSenseInputReport(event) {
+            if (!event || event.device !== this.dualSenseHid) return;
+            const data = event.data;
+            if (!data || typeof data.getUint8 !== 'function') return;
+            const reportId = Number(event.reportId);
+            const length = data.byteLength;
+            let axes, triggerL, triggerR, buttons0, buttons1, buttons2;
 
-          anchor = "                    { opcode: 'setDualSenseMuteLED', blockType: Scratch.BlockType.COMMAND, text: 'set DualSense mute LED [STATE]', arguments: { STATE: { type: Scratch.ArgumentType.STRING, menu: 'muteLEDStates', defaultValue: 'On' } } },\n"
-          blocks = anchor + "                    { opcode: 'turnOnDualSenseTouchpadLED', blockType: Scratch.BlockType.COMMAND, text: 'Turn on [ZONE] bottom DualSense Touchpad LED', arguments: { ZONE: { type: Scratch.ArgumentType.STRING, menu: 'touchpadLedZones', defaultValue: 'Middle' } } },\n                    { opcode: 'turnOffDualSenseTouchpadLED', blockType: Scratch.BlockType.COMMAND, text: 'Turn off [ZONE] bottom DualSense Touchpad LED', arguments: { ZONE: { type: Scratch.ArgumentType.STRING, menu: 'touchpadLedZones', defaultValue: 'Middle' } } },\n"
-          if "turnOnDualSenseTouchpadLED" not in s:
-              if anchor not in s:
-                  raise SystemExit("Could not find mute LED block anchor")
-              s = s.replace(anchor, blocks, 1)
-
-          menu_anchor = "                    sticks: ['Left stick','Right stick'], directions: ['X','Y'], triggerSides: ['L','R'], muteLEDStates: ['On','Off'], adaptiveTriggers: ['L','R'], lightTransition: ['Fade','Instant'],"
-          menu_replacement = "                    sticks: ['Left stick','Right stick'], directions: ['X','Y'], triggerSides: ['L','R'], muteLEDStates: ['On','Off'], touchpadLedZones: ['Middle','Left','Right'], adaptiveTriggers: ['L','R'], lightTransition: ['Fade','Instant'],"
-          if "touchpadLedZones:" not in s:
-              if menu_anchor not in s:
-                  raise SystemExit("Could not find menu anchor")
-              s = s.replace(menu_anchor, menu_replacement, 1)
-
-          method_anchor = "        dualSenseMuteLED() {\n            return !!(this.dualSenseConnected() && this.dualSenseOutput.muteLed);\n        }\n"
-          methods = method_anchor + """
-        dualSenseTouchpadLedMask(zone) {
-            // Five player LEDs under the touchpad, bits 0..4 left-to-right.
-            // The three visible zones are the left pair, center LED, and right pair.
-            switch (String(zone || 'Middle').toLowerCase()) {
-                case 'left': return 0x03;
-                case 'right': return 0x18;
-                case 'middle':
-                default: return 0x04;
+            // WebHID event.data excludes reportId. USB 0x01 has 63 payload
+            // bytes; Bluetooth 0x31 has 77 payload bytes.
+            if (reportId === 0x01 && length === 63) {
+                axes = [data.getUint8(0)/127.5-1, data.getUint8(1)/127.5-1, data.getUint8(2)/127.5-1, data.getUint8(3)/127.5-1];
+                triggerL = data.getUint8(4);
+                triggerR = data.getUint8(5);
+                buttons0 = data.getUint8(7);
+                buttons1 = data.getUint8(8);
+                buttons2 = data.getUint8(9);
+            } else if (reportId === 0x31 && length === 77) {
+                axes = [data.getUint8(1)/127.5-1, data.getUint8(2)/127.5-1, data.getUint8(3)/127.5-1, data.getUint8(4)/127.5-1];
+                triggerL = data.getUint8(5);
+                triggerR = data.getUint8(6);
+                buttons0 = data.getUint8(8);
+                buttons1 = data.getUint8(9);
+                buttons2 = data.getUint8(10);
+            } else {
+                return;
             }
+
+            const dpad = buttons0 & 0x0F;
+            const next = [
+                !!(buttons0&0x20),!!(buttons0&0x40),!!(buttons0&0x10),!!(buttons0&0x80),
+                !!(buttons1&0x01),!!(buttons1&0x02),!!(buttons1&0x04),!!(buttons1&0x08),
+                !!(buttons1&0x10),!!(buttons1&0x20),!!(buttons1&0x40),!!(buttons1&0x80),
+                dpad===0||dpad===1||dpad===7,dpad===3||dpad===4||dpad===5,
+                dpad===5||dpad===6||dpad===7,dpad===1||dpad===2||dpad===3,
+                !!(buttons2&0x01),!!(buttons2&0x02),!!(buttons2&0x04)
+            ];
+
+            const touchOffset = 32;
+            let touchX=0,touchY=0,touchActive=false;
+            if(length>=touchOffset+4){
+                const contact=data.getUint8(touchOffset);
+                if((contact&0x80)===0){
+                    touchX=data.getUint8(touchOffset+1)|((data.getUint8(touchOffset+2)&0x0F)<<8);
+                    touchY=((data.getUint8(touchOffset+2)>>4)&0x0F)|(data.getUint8(touchOffset+3)<<4);
+                    touchActive=true;
+                }
+            }
+
+            this.dualSenseRawPreviousButtons=this.dualSenseRawButtons.slice();
+            this.dualSenseRawButtons=next;
+            this.dualSenseRawAxes=axes.map(v=>Math.max(-1,Math.min(1,v)));
+            this.dualSenseTouchX=touchX;
+            this.dualSenseTouchY=touchY;
+            this.dualSenseTouchTouched=touchActive;
+            this.dualSenseTriggerPressure={L:triggerL,R:triggerR};
+            this.dualSenseInputSeen=true;
+            this.previousButtons.set(this.dualSenseSyntheticIndex,this.dualSenseRawPreviousButtons.slice());
+            this.currentButtons.set(this.dualSenseSyntheticIndex,this.dualSenseRawButtons.slice());
         }
-
-        async turnOnDualSenseTouchpadLED(args) {
-            if (!this.dualSenseConnected()) return false;
-            const mask = this.dualSenseTouchpadLedMask(args && args.ZONE);
-            return this.sendDualSenseOutput(output => {
-                output.playerLeds = (output.playerLeds | mask) & 0x1F;
-            });
-        }
-
-        async turnOffDualSenseTouchpadLED(args) {
-            if (!this.dualSenseConnected()) return false;
-            const mask = this.dualSenseTouchpadLedMask(args && args.ZONE);
-            return this.sendDualSenseOutput(output => {
-                output.playerLeds = output.playerLeds & (~mask & 0x1F);
-            });
-        }
-"""
-          if "dualSenseTouchpadLedMask(zone)" not in s:
-              if method_anchor not in s:
-                  raise SystemExit("Could not find mute LED method anchor")
-              s = s.replace(method_anchor, methods, 1)
-
-          p.write_text(s)
-
-      - name: Commit changes and remove temporary workflow
+'''
+          p.write_text(s[:start]+method+s[end:])
+      - name: Remove temporary workflow
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm -f .github/workflows/one-time-touchpad-led-update.yml touchpad-led-update-trigger.txt
-          git add extension.js .github/workflows/one-time-touchpad-led-update.yml touchpad-led-update-trigger.txt
-          git commit -m "Add DualSense touchpad LED controls"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm -f .github/workflows/one-time-touchpad-led-update.yml dualsense-input-fix-trigger.txt .github/workflows/fix-dualsense-input.yml
+          git add extension.js .github/workflows/one-time-touchpad-led-update.yml dualsense-input-fix-trigger.txt .github/workflows/fix-dualsense-input.yml
+          git commit -m 'Fix DualSense button bumper and trigger input parsing'
           git push
