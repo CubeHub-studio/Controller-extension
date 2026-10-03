@@ -306,7 +306,6 @@
                     { opcode: 'searchForNewControllers', blockType: Scratch.BlockType.COMMAND, text: 'Search for new controllers' },
                     { opcode: 'requestHID', blockType: Scratch.BlockType.COMMAND, text: 'Request HID' },
                     { opcode: 'playControllerAudio', blockType: Scratch.BlockType.COMMAND, text: 'Play on controller [CONTROLLER] audio from GitHub Pages [URL]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, URL: { type: Scratch.ArgumentType.STRING, defaultValue: 'https://cubehub-studio.github.io/Controller-extension/audio.mp3' } } },
-                    { opcode: 'selectDualSenseAudioOutput', blockType: Scratch.BlockType.COMMAND, text: 'Select audio output for controller [CONTROLLER]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 } } },
                     { opcode: 'playProjectSoundOnController', blockType: Scratch.BlockType.COMMAND, text: 'Play on controller [CONTROLLER] project sound [SOUND]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, SOUND: { type: Scratch.ArgumentType.STRING, defaultValue: '1' } } },
                     { opcode: 'connectDualSense', blockType: Scratch.BlockType.COMMAND, text: 'connect DualSense for lights' },
                     { opcode: 'dualSenseConnected', blockType: Scratch.BlockType.BOOLEAN, text: 'DualSense lights connected?' },
@@ -480,6 +479,45 @@
                 // contains the exact reason if the output is unavailable,
                 // permission is missing, or the URL cannot be decoded.
                 console.warn('Controller audio playback failed:', error);
+            }
+        }
+
+        async playProjectSoundOnController(args, util) {
+            const controllerNumber = Math.max(1, Math.floor(Number(args && args.CONTROLLER) || 1));
+            const target = util && util.target;
+            const sounds = target && target.sprite && Array.isArray(target.sprite.sounds)
+                ? target.sprite.sounds
+                : [];
+            if (!sounds.length) return false;
+
+            const requested = String(args && args.SOUND || '');
+            let sound = sounds.find(item => String(item.name || '') === requested);
+            if (!sound) {
+                const index = Number.parseInt(requested, 10);
+                if (Number.isInteger(index) && index >= 1 && index <= sounds.length) {
+                    sound = sounds[index - 1];
+                }
+            }
+            if (!sound || !sound.asset || !sound.asset.data) {
+                console.warn('Project sound is not loaded:', requested);
+                return false;
+            }
+
+            const format = String(sound.dataFormat || sound.asset.dataFormat || 'wav').toLowerCase();
+            const mime = format === 'mp3' ? 'audio/mpeg' :
+                format === 'ogg' ? 'audio/ogg' :
+                format === 'opus' ? 'audio/ogg; codecs=opus' :
+                format === 'm4a' ? 'audio/mp4' :
+                'audio/wav';
+            const objectUrl = URL.createObjectURL(new Blob([sound.asset.data], {type: mime}));
+
+            try {
+                return await this.playControllerAudio({
+                    CONTROLLER: controllerNumber,
+                    URL: objectUrl
+                });
+            } finally {
+                setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
             }
         }
 
