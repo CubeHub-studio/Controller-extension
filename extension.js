@@ -306,6 +306,7 @@
                     { opcode: 'searchForNewControllers', blockType: Scratch.BlockType.COMMAND, text: 'Search for new controllers' },
                     { opcode: 'requestHID', blockType: Scratch.BlockType.COMMAND, text: 'Request HID' },
                     { opcode: 'playControllerAudio', blockType: Scratch.BlockType.COMMAND, text: 'Play on controller [CONTROLLER] audio from GitHub Pages [URL]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, URL: { type: Scratch.ArgumentType.STRING, defaultValue: 'https://cubehub-studio.github.io/Controller-extension/audio.mp3' } } },
+                    { opcode: 'enableDualSenseAudio', blockType: Scratch.BlockType.COMMAND, text: 'Enable DualSense audio output', arguments: {} },
                     { opcode: 'playProjectSoundOnController', blockType: Scratch.BlockType.COMMAND, text: 'Play on controller [CONTROLLER] project sound [SOUND]', arguments: { CONTROLLER: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 }, SOUND: { type: Scratch.ArgumentType.STRING, defaultValue: '1' } } },
                     { opcode: 'connectDualSense', blockType: Scratch.BlockType.COMMAND, text: 'connect DualSense for lights' },
                     { opcode: 'dualSenseConnected', blockType: Scratch.BlockType.BOOLEAN, text: 'DualSense lights connected?' },
