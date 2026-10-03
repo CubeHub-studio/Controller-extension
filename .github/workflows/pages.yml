@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -16,12 +16,107 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  fix-input:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Fix DualSense input parser
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('extension.js')
+          s = p.read_text()
+          start = s.find('        handleDualSenseInputReport(event) {')
+          end = s.find('\n        controllerCount()', start)
+          if start < 0 or end < 0:
+              raise SystemExit('DualSense input method boundaries not found')
+          method = r'''        handleDualSenseInputReport(event) {
+            if (!event || event.device !== this.dualSenseHid) return;
+            const data = event.data;
+            if (!data || typeof data.getUint8 !== 'function') return;
+            const reportId = Number(event.reportId);
+            const length = data.byteLength;
+            let axes, triggerL, triggerR, buttons0, buttons1, buttons2;
+
+            // WebHID event.data excludes reportId. USB 0x01 has 63 payload
+            // bytes; Bluetooth 0x31 has 77 payload bytes.
+            if (reportId === 0x01 && length === 63) {
+                axes = [data.getUint8(0)/127.5-1, data.getUint8(1)/127.5-1, data.getUint8(2)/127.5-1, data.getUint8(3)/127.5-1];
+                triggerL = data.getUint8(4);
+                triggerR = data.getUint8(5);
+                buttons0 = data.getUint8(7);
+                buttons1 = data.getUint8(8);
+                buttons2 = data.getUint8(9);
+            } else if (reportId === 0x31 && length === 77) {
+                axes = [data.getUint8(1)/127.5-1, data.getUint8(2)/127.5-1, data.getUint8(3)/127.5-1, data.getUint8(4)/127.5-1];
+                triggerL = data.getUint8(5);
+                triggerR = data.getUint8(6);
+                buttons0 = data.getUint8(8);
+                buttons1 = data.getUint8(9);
+                buttons2 = data.getUint8(10);
+            } else {
+                return;
+            }
+
+            const dpad = buttons0 & 0x0F;
+            const next = [
+                !!(buttons0&0x20),!!(buttons0&0x40),!!(buttons0&0x10),!!(buttons0&0x80),
+                !!(buttons1&0x01),!!(buttons1&0x02),!!(buttons1&0x04),!!(buttons1&0x08),
+                !!(buttons1&0x10),!!(buttons1&0x20),!!(buttons1&0x40),!!(buttons1&0x80),
+                dpad===0||dpad===1||dpad===7,dpad===3||dpad===4||dpad===5,
+                dpad===5||dpad===6||dpad===7,dpad===1||dpad===2||dpad===3,
+                !!(buttons2&0x01),!!(buttons2&0x02),!!(buttons2&0x04)
+            ];
+
+            const touchOffset=32;
+            let touchX=0,touchY=0,touchActive=false;
+            if(length>=touchOffset+4){
+                const contact=data.getUint8(touchOffset);
+                if((contact&0x80)===0){
+                    touchX=data.getUint8(touchOffset+1)|((data.getUint8(touchOffset+2)&0x0F)<<8);
+                    touchY=((data.getUint8(touchOffset+2)>>4)&0x0F)|(data.getUint8(touchOffset+3)<<4);
+                    touchActive=true;
+                }
+            }
+
+            this.dualSenseRawPreviousButtons=this.dualSenseRawButtons.slice();
+            this.dualSenseRawButtons=next;
+            this.dualSenseRawAxes=axes.map(v=>Math.max(-1,Math.min(1,v)));
+            this.dualSenseTouchX=touchX;
+            this.dualSenseTouchY=touchY;
+            this.dualSenseTouchTouched=touchActive;
+            this.dualSenseTriggerPressure={L:triggerL,R:triggerR};
+            this.dualSenseInputSeen=true;
+            this.previousButtons.set(this.dualSenseSyntheticIndex,this.dualSenseRawPreviousButtons.slice());
+            this.currentButtons.set(this.dualSenseSyntheticIndex,this.dualSenseRawButtons.slice());
+        }
+'''
+          p.write_text(s[:start]+method+s[end:])
+
+      - name: Commit fixed parser
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add extension.js
+          if git diff --cached --quiet; then
+            echo 'DualSense input parser already fixed'
+          else
+            git commit -m 'Fix DualSense button bumper and trigger input parsing'
+            git push
+          fi
+
+  build:
+    needs: fix-input
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fixed main branch
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 1
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -34,10 +129,8 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-
     environment:
       name: github-pages
-
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
