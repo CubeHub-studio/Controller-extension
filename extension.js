@@ -522,6 +522,53 @@
             }
         }
 
+        async enableDualSenseAudio() {
+            if (!navigator.mediaDevices ||
+                typeof navigator.mediaDevices.getUserMedia !== 'function' ||
+                typeof navigator.mediaDevices.enumerateDevices !== 'function') {
+                console.warn('Browser media-device audio APIs are unavailable.');
+                return false;
+            }
+
+            let stream = null;
+            try {
+                // The Web Audio specification permits output-device access to
+                // be granted implicitly when the page has permission for a
+                // media input in the same physical device group. DualSense USB
+                // exposes an audio input as well as its speaker.
+                stream = await navigator.mediaDevices.getUserMedia({audio: true});
+                const devices = await navigator.mediaDevices.enumerateDevices();
+
+                const outputs = devices.filter(device => {
+                    if (device.kind !== 'audiooutput') return false;
+                    const label = String(device.label || '').toLowerCase();
+                    return label.includes('wireless controller') ||
+                        label.includes('dualsense') ||
+                        label.includes('sony interactive entertainment');
+                });
+
+                if (!outputs.length) {
+                    console.warn('No DualSense audio output was exposed by the browser.');
+                    return false;
+                }
+
+                outputs.forEach((device, index) => {
+                    this.dualSenseAudioDeviceIds.set(index + 1, device.deviceId);
+                });
+
+                this.githubAudioDeviceId = outputs[0].deviceId;
+                this.githubAudioController = 1;
+                return true;
+            } catch (error) {
+                console.warn('Could not enable DualSense audio output:', error);
+                return false;
+            } finally {
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+            }
+        }
+
         async requestHID() {
             if (!('hid' in navigator)) return false;
             try {
