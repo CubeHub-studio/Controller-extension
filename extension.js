@@ -997,11 +997,12 @@
                     this.setTriggerVibration(effect, 0, 5, 30);
                     break;
                 case 'Lock up':
-                    // Start maximum feedback at zone 2 (~20% trigger travel).
-                    // This is the closest software equivalent to a trigger lock
-                    // on a standard DualSense; the actuator cannot create a
-                    // literal mechanical stop.
-                    this.setTriggerFeedback(effect, 2, 8);
+                    // Use the DualSense weapon/break-point effect rather than
+                    // continuous feedback. Zone 2 is the lock point (~20%).
+                    // The maximum weapon strength makes the actuator hold the
+                    // trigger against that stop instead of merely adding
+                    // uniform resistance.
+                    this.setTriggerWeapon(effect, 2, 8, 8);
                     break;
                 case 'Calibration':
                     effect[0] = 0x05;
