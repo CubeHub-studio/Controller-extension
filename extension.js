@@ -37,9 +37,9 @@
                 muteLed: 0,
                 playerLeds: 0,
                 lightbar: [255, 0, 0],
-                // DualSense trigger effect blocks are 8 bytes: mode + 7 parameters.
-                r2Effect: new Uint8Array(8),
-                l2Effect: new Uint8Array(8)
+                // DualSense trigger effect blocks are 10 bytes: mode + 9 parameters.
+                r2Effect: new Uint8Array(10),
+                l2Effect: new Uint8Array(10)
             };
             this.dualSenseLightBrightness = 255;
 
@@ -309,12 +309,11 @@
                     buttons: { acceptReporters: true, items: ['A','B','X','Y','Cross','Circle','Square','Triangle','LB','RB','LT','RT','L1','R1','L2','R2','Back / Share','Start / Options','L3','R3','DPad Up','DPad Down','DPad Left','DPad Right','Guide / PS','Touchpad','Mute'] },
                     sticks: ['Left stick','Right stick'], directions: ['X','Y'], triggerSides: ['L','R'], muteLEDStates: ['On','Off'], adaptiveTriggers: ['L','R'], lightTransition: ['Fade','Instant'],
                     adaptiveTriggerModes: [
-                        '1. Off','2. Feedback','3. Weapon','4. Vibration',
-                        '5. Slope Feedback','6. Multiple-Position Feedback','7. Multiple-Position Vibration',
-                        '8. GameCube Emulation','9. Machine Gun / Automatic','10. Galloping',
-                        '11. Pistol / Semi-Automatic','12. Rifle / Bow & Arrow','13. Choppy',
-                        '14. Soft','15. Medium','16. Max','17. Pulse / Tension Guard',
-                        '18. Rumble Transmission','19. Lock up'
+                        'Off','Feedback','Weapon','Vibration','Slope Feedback',
+                        'Multiple-Position Feedback','Multiple-Position Vibration','GameCube Emulation',
+                        'Machine Gun / Automatic','Galloping','Pistol / Semi-Automatic',
+                        'Rifle / Bow & Arrow','Choppy','Soft','Medium','Max',
+                        'Pulse / Tension Guard','Rumble Transmission','Lock up'
                     ]
                 }
             };
@@ -558,9 +557,8 @@
             // effect bytes are consumed from the same main output report.
             // Keep the reference values instead of inventing a separate
             // trigger-only flag combination.
-            common[0] = 0xFF;
-            // bit 0 = mute LED, bit 1 = power-save, bit 2 = lightbar,
-            // bit 4 = player LEDs, bit 5 = haptic low-pass/filter control.
+            common[0] = 0x0C | ((this.dualSenseOutput.rumbleRight || this.dualSenseOutput.rumbleLeft) ? 0x03 : 0x00);
+            // Keep LED/lightbar controls enabled while explicitly enabling both adaptive-trigger motor channels.
             common[1] = 0xF7;
 
             common[2] = this.dualSenseOutput.rumbleRight;
@@ -577,7 +575,7 @@
             // Bluetooth: R2 common[12..19], L2 common[23..30].
             const r2Offset = this.dualSenseConnection === 'bluetooth' ? 12 : 10;
             const l2Offset = this.dualSenseConnection === 'bluetooth' ? 23 : 21;
-            for (let i = 0; i < 8; i++) {
+            for (let i = 0; i < 10; i++) {
                 common[r2Offset + i] = this.dualSenseOutput.r2Effect[i] || 0;
                 common[l2Offset + i] = this.dualSenseOutput.l2Effect[i] || 0;
             }
@@ -912,18 +910,6 @@
             return Object.prototype.hasOwnProperty.call(modes, mode) ? modes[mode] : 0x05;
         }
 
-        adaptiveTriggerModeNumber(args) {
-            const modes = [
-                'Off','Feedback','Weapon','Vibration','Slope Feedback',
-                'Multiple-Position Feedback','Multiple-Position Vibration','GameCube Emulation',
-                'Machine Gun / Automatic','Galloping','Pistol / Semi-Automatic',
-                'Rifle / Bow & Arrow','Choppy','Soft','Medium','Max',
-                'Pulse / Tension Guard','Rumble Transmission','Lock up'
-            ];
-            const n = Math.max(1, Math.min(modes.length, Math.floor(Number(args.NUMBER) || 1)));
-            return `${n}. ${modes[n - 1]}`;
-        }
-
         async setAdaptiveTriggerMode(args) {
             // Adaptive triggers are HID-only. The Gamepad API cannot send the
             // vendor-specific DualSense trigger effect report.
@@ -935,8 +921,8 @@
             const trigger = String(args.TRIGGER || 'L').toUpperCase() === 'R' ? 'R' : 'L';
             // The visible menu is numbered for creators (e.g. "1. Off"),
             // but the protocol mapping uses the unnumbered name internally.
-            const modeName = String(args.MODE || '1. Off').replace(/^\d+\.\s*/, '');
-            const effect = new Uint8Array(8);
+            const modeName = String(args.MODE || 'Off');
+            const effect = new Uint8Array(10);
 
             switch (modeName) {
                 case 'Off':
@@ -1049,7 +1035,7 @@
                 return Number.isFinite(n) ? Math.max(0, Math.min(255, Math.floor(n))) : 0;
             };
 
-            const effect = new Uint8Array(8);
+            const effect = new Uint8Array(10);
             effect[0] = parseByte(args.MODE);
             const values = String(args.PARAMETERS ?? '')
                 .split(/[,\\s]+/)
@@ -1073,7 +1059,7 @@
             // another feature's bytes.
             const target = trigger === 'R' ? this.dualSenseOutput.r2Effect : this.dualSenseOutput.l2Effect;
             target.fill(0);
-            target.set(effect.subarray(0, 8));
+            target.set(effect.subarray(0, 10));
 
             return this.sendDualSenseOutput();
         }
