@@ -513,12 +513,23 @@
             const objectUrl = URL.createObjectURL(new Blob([sound.asset.data], {type: mime}));
 
             try {
-                return await this.playControllerAudio({
+                const success = await this.playControllerAudio({
                     CONTROLLER: controllerNumber,
                     URL: objectUrl
                 });
-            } finally {
-                setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+
+                if (success && this.githubAudio) {
+                    this.githubAudio.addEventListener('ended', () => {
+                        URL.revokeObjectURL(objectUrl);
+                    }, {once: true});
+                } else {
+                    URL.revokeObjectURL(objectUrl);
+                }
+
+                return success;
+            } catch (error) {
+                URL.revokeObjectURL(objectUrl);
+                throw error;
             }
         }
 
