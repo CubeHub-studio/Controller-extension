@@ -35,10 +35,22 @@
                 muteLed: 0,
                 playerLeds: 0,
                 lightbar: [255, 0, 0],
-                r2Effect: new Uint8Array(10),
-                l2Effect: new Uint8Array(10)
+                // DualSense trigger effect blocks are 8 bytes: mode + 7 parameters.
+                r2Effect: new Uint8Array(8),
+                l2Effect: new Uint8Array(8)
             };
             this.dualSenseLightBrightness = 255;
+
+            // All DualSense output features share one serialized, throttled queue.
+            // Scratch/Gandi can execute command blocks much faster than HID can
+            // reasonably be written, so only the newest dirty state is transmitted.
+            this.dualSenseOutputDirty = false;
+            this.dualSenseOutputSending = false;
+            this.dualSenseOutputTimer = null;
+            this.dualSenseLastOutputSignature = '';
+            this.dualSenseQueuedOutputSignature = '';
+            this.dualSenseMinimumOutputInterval = 10;
+            this.dualSenseLastOutputTime = 0;
 
             // Raw DualSense input state. This is used when Chrome exposes the
             // controller through WebHID but does not expose it through the
@@ -63,6 +75,20 @@
 
             window.addEventListener('gamepaddisconnected', e => {
                 if (e.gamepad) this.removeGamepadByIndex(e.gamepad.index);
+            });
+
+            // Release adaptive-trigger effects whenever Gandi/Scratch stops the project.
+            // PROJECT_STOP_ALL is the VM event used by the Scratch-compatible runtime.
+            try {
+                const runtime = Scratch.vm && Scratch.vm.runtime;
+                if (runtime && typeof runtime.on === 'function') {
+                    runtime.on('PROJECT_STOP_ALL', () => this.resetDualSenseTriggers());
+                }
+            } catch (_) {}
+
+            // Also release the triggers when the page is being unloaded.
+            window.addEventListener('beforeunload', () => {
+                this.resetDualSenseTriggers();
             });
 
             this.startPolling();
@@ -279,7 +305,14 @@
                     physicalButtons: { acceptReporters: true, items: Array.from({ length: 19 }, (_, i) => String(i + 1)) },
                     buttons: { acceptReporters: true, items: ['A','B','X','Y','Cross','Circle','Square','Triangle','LB','RB','LT','RT','L1','R1','L2','R2','Back / Share','Start / Options','L3','R3','DPad Up','DPad Down','DPad Left','DPad Right','Guide / PS','Touchpad','Mute'] },
                     sticks: ['Left stick','Right stick'], directions: ['X','Y'], triggerSides: ['L','R'], muteLEDStates: ['On','Off'], adaptiveTriggers: ['L','R'], lightTransition: ['Fade','Instant'],
-                    adaptiveTriggerModes: ['Off','Feedback','Weapon','Vibration','Slope Feedback','Multiple-Position Feedback','Multiple-Position Vibration','GameCube Emulation','Machine Gun / Automatic','Galloping','Pistol / Semi-Automatic','Rifle / Bow & Arrow','Choppy','Soft','Medium','Max','Pulse / Tension Guard','Rumble Transmission','Lock up']
+                    adaptiveTriggerModes: [
+                        '1. Off','2. Feedback','3. Weapon','4. Vibration',
+                        '5. Slope Feedback','6. Multiple-Position Feedback','7. Multiple-Position Vibration',
+                        '8. GameCube Emulation','9. Machine Gun / Automatic','10. Galloping',
+                        '11. Pistol / Semi-Automatic','12. Rifle / Bow & Arrow','13. Choppy',
+                        '14. Soft','15. Medium','16. Max','17. Pulse / Tension Guard',
+                        '18. Rumble Transmission','19. Lock up'
+                    ]
                 }
             };
         }
@@ -560,17 +593,96 @@
             return { reportId, data };
         }
 
+        dualSenseOutputSignature() {
+            const o = this.dualSenseOutput;
+            return JSON.stringify([
+                o.rumbleRight, o.rumbleLeft, o.muteLed, o.playerLeds,
+                o.lightbar,
+                Array.from(o.r2Effect),
+                Array.from(o.l2Effect)
+            ]);
+        }
+
+        scheduleDualSenseOutput() {
+            if (this.dualSenseOutputTimer !== null || this.dualSenseOutputSending) return;
+            const wait = Math.max(
+                0,
+                this.dualSenseMinimumOutputInterval -
+                (performance.now() - this.dualSenseLastOutputTime)
+            );
+            this.dualSenseOutputTimer = setTimeout(() => {
+                this.dualSenseOutputTimer = null;
+                this.flushDualSenseOutput();
+            }, wait);
+        }
+
+        async flushDualSenseOutput() {
+            if (this.dualSenseOutputSending || !this.dualSenseOutputDirty) return;
+            if (!this.dualSenseConnected()) {
+                this.dualSenseOutputDirty = false;
+                return;
+            }
+
+            this.dualSenseOutputSending = true;
+            const signature = this.dualSenseOutputSignature();
+
+            try {
+                const report = this.buildDualSenseOutputReport();
+                await this.dualSenseHid.sendReport(report.reportId, report.data);
+                this.dualSenseSequence = (this.dualSenseSequence + 1) & 0x0F;
+                this.dualSenseLastOutputTime = performance.now();
+                this.dualSenseLastOutputSignature = signature;
+
+                // If another block changed state while sendReport() was waiting,
+                // keep the queue dirty and transmit that newer state next.
+                this.dualSenseOutputDirty =
+                    this.dualSenseOutputSignature() !== this.dualSenseLastOutputSignature;
+            } catch (_) {
+                // Keep the state dirty so a later call can retry after a transient
+                // WebHID failure instead of silently losing the requested effect.
+                this.dualSenseOutputDirty = true;
+            } finally {
+                this.dualSenseOutputSending = false;
+                if (this.dualSenseOutputDirty) this.scheduleDualSenseOutput();
+            }
+        }
+
         async sendDualSenseOutput(configure) {
             if (!this.dualSenseConnected()) return false;
             try {
                 if (typeof configure === 'function') configure(this.dualSenseOutput);
-                const report = this.buildDualSenseOutputReport();
-                await this.dualSenseHid.sendReport(report.reportId, report.data);
-                this.dualSenseSequence = (this.dualSenseSequence + 1) & 0x0F;
+
+                const signature = this.dualSenseOutputSignature();
+                if (
+                    signature === this.dualSenseLastOutputSignature ||
+                    signature === this.dualSenseQueuedOutputSignature
+                ) {
+                    return true;
+                }
+
+                this.dualSenseQueuedOutputSignature = signature;
+                this.dualSenseOutputDirty = true;
+                this.scheduleDualSenseOutput();
                 return true;
             } catch (_) {
                 return false;
             }
+        }
+
+        async resetDualSenseTriggers() {
+            if (!this.dualSenseConnected()) return false;
+            this.dualSenseOutput.r2Effect.fill(0);
+            this.dualSenseOutput.l2Effect.fill(0);
+            this.dualSenseOutput.r2Effect[0] = 0x05;
+            this.dualSenseOutput.l2Effect[0] = 0x05;
+
+            // Force this safety release through the queue even if the last
+            // recorded state already looked neutral.
+            this.dualSenseLastOutputSignature = '';
+            this.dualSenseQueuedOutputSignature = '';
+            this.dualSenseOutputDirty = true;
+            this.scheduleDualSenseOutput();
+            return true;
         }
 
         async setDualSenseMuteLED(args) {
@@ -596,9 +708,8 @@
         // DualSense adaptive-trigger effects use an 8-byte block:
         // [mode, parameter1..parameter7]. These values follow the
         // WebHID DualSense Explorer reference implementation.
-        writeTriggerFeedback(effect, trigger) {
-            const offset = trigger === 'R' ? 10 : 20;
-            for (let i = 0; i < 10; i++) effect[offset + i] = 0;
+        writeTriggerFeedback(effect) {
+            effect.fill(0);
         }
 
         setTriggerFeedback(effect, position, strength) {
@@ -711,7 +822,8 @@
             effect[4] = (amplitudeZones >>> 8) & 0xFF;
             effect[5] = (amplitudeZones >>> 16) & 0xFF;
             effect[6] = (amplitudeZones >>> 24) & 0xFF;
-            effect[9] = frequency;
+            // Parameter 7 is the actuation frequency.
+            effect[7] = frequency;
         }
 
         setTriggerMultipleFeedback(effect, strengths) {
@@ -766,7 +878,8 @@
             effect[4] = (amplitudeZones >>> 8) & 0xFF;
             effect[5] = (amplitudeZones >>> 16) & 0xFF;
             effect[6] = (amplitudeZones >>> 24) & 0xFF;
-            effect[9] = Math.max(1, Math.min(255, Math.floor(frequency)));
+            // Parameter 7 is the actuation frequency.
+            effect[7] = Math.max(1, Math.min(255, Math.floor(frequency)));
         }
 
         adaptiveTriggerMode(mode) {
@@ -794,6 +907,18 @@
             return Object.prototype.hasOwnProperty.call(modes, mode) ? modes[mode] : 0x05;
         }
 
+        adaptiveTriggerModeNumber(args) {
+            const modes = [
+                'Off','Feedback','Weapon','Vibration','Slope Feedback',
+                'Multiple-Position Feedback','Multiple-Position Vibration','GameCube Emulation',
+                'Machine Gun / Automatic','Galloping','Pistol / Semi-Automatic',
+                'Rifle / Bow & Arrow','Choppy','Soft','Medium','Max',
+                'Pulse / Tension Guard','Rumble Transmission','Lock up'
+            ];
+            const n = Math.max(1, Math.min(modes.length, Math.floor(Number(args.NUMBER) || 1)));
+            return `${n}. ${modes[n - 1]}`;
+        }
+
         async setAdaptiveTriggerMode(args) {
             // Adaptive triggers are HID-only. The Gamepad API cannot send the
             // vendor-specific DualSense trigger effect report.
@@ -803,8 +928,10 @@
             if (!controller || this.controllerType(controller) !== 'PlayStation') return false;
 
             const trigger = String(args.TRIGGER || 'L').toUpperCase() === 'R' ? 'R' : 'L';
-            const modeName = String(args.MODE || 'Off');
-            const effect = new Uint8Array(10);
+            // The visible menu is numbered for creators (e.g. "1. Off"),
+            // but the protocol mapping uses the unnumbered name internally.
+            const modeName = String(args.MODE || '1. Off').replace(/^\\d+\\.\\s*/, '');
+            const effect = new Uint8Array(8);
 
             switch (modeName) {
                 case 'Off':
@@ -856,7 +983,7 @@
                     effect[6] = 0x3F;
                     effect[7] = 0x00;
                     effect[8] = 0x00;
-                    effect[9] = 10;
+                    effect[7] = 10;
                     break;
                 case 'Choppy':
                     effect[0] = 0x21;
@@ -868,13 +995,13 @@
                     effect[6] = 0x26;
                     break;
                 case 'Soft':
-                    this.setSimpleFeedback(effect, 0x00, 0x00);
+                    this.setTriggerFeedback(effect, 0, 2);
                     break;
                 case 'Medium':
-                    this.setSimpleFeedback(effect, 0x00, 0x64);
+                    this.setTriggerFeedback(effect, 0, 5);
                     break;
                 case 'Max':
-                    this.setSimpleFeedback(effect, 0x00, 0xDC);
+                    this.setTriggerFeedback(effect, 0, 8);
                     break;
                 case 'Pulse / Tension Guard':
                     this.setSimpleFeedback(effect, 0x55, 0x64);
@@ -924,55 +1051,18 @@
             return this.sendDualSenseTriggerOutput(trigger, effect);
         }
 
-
         async sendDualSenseTriggerOutput(trigger, effect) {
             if (!this.dualSenseConnected()) return false;
 
-            try {
-                let reportId;
-                let data;
-                let common;
+            // Adaptive trigger effects are part of the same main output report
+            // as rumble, mute LED, player LEDs, and the lightbar. Store the
+            // effect in the unified state object so one feature cannot erase
+            // another feature's bytes.
+            const target = trigger === 'R' ? this.dualSenseOutput.r2Effect : this.dualSenseOutput.l2Effect;
+            target.fill(0);
+            target.set(effect.subarray(0, 8));
 
-                if (this.dualSenseConnection === 'bluetooth') {
-                    reportId = 0x31;
-                    data = new Uint8Array(77);
-                    data[0] = (this.dualSenseSequence & 0x0F) << 4;
-                    data[1] = 0x10;
-                    this.dualSenseSequence = (this.dualSenseSequence + 1) & 0x0F;
-                    common = data.subarray(2, 49);
-                } else {
-                    reportId = 0x02;
-                    data = new Uint8Array(47);
-                    common = data;
-                }
-
-                // IMPORTANT: adaptive-trigger output must not enable the
-                // compatibility-rumble bits in valid_flag0. Those bits can
-                // route the controller into the old vibration path and prevent
-                // the adaptive trigger actuators from responding.
-                common[0] = trigger === 'R' ? 0x04 : 0x08;
-
-                // WebHID strips the report ID from event data, and our Bluetooth
-                // output buffer begins at the sequence byte. The DualSense
-                // Bluetooth trigger fields are at common[10..19] (R2) and
-                // common[23..32] (L2). USB uses common[10..19] and
-                // common[21..30].
-                const offset = trigger === 'R'
-                    ? 10
-                    : (this.dualSenseConnection === 'bluetooth' ? 23 : 21);
-                for (let i = 0; i < 10; i++) {
-                    common[offset + i] = effect[i] || 0;
-                }
-
-                if (this.dualSenseConnection === 'bluetooth') {
-                    this.fillBluetoothChecksum(reportId, data);
-                }
-
-                await this.dualSenseHid.sendReport(reportId, data);
-                return true;
-            } catch (_) {
-                return false;
-            }
+            return this.sendDualSenseOutput();
         }
 
 
