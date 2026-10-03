@@ -39,7 +39,7 @@
             this.githubAudioController = 0;
             this.githubAudioDeviceId = '';
             this.dualSenseAudioDeviceIds = new Map();
-            this.dualSenseAudioConnected = false;
+            this.dualSenseAudioEnabled = false;
             this.dualSenseAudioDeviceLabel = '';
             this.dualSenseAudioError = '';
 
@@ -452,7 +452,7 @@
 
         async enableDualSenseAudio() {
             this.dualSenseAudioError = '';
-            this.dualSenseAudioConnected = false;
+            this.dualSenseAudioEnabled = false;
             this.dualSenseAudioDeviceLabel = '';
 
             if (!navigator.mediaDevices ||
@@ -524,7 +524,7 @@
                 this.githubAudioDeviceId = output.deviceId;
                 this.githubAudioController = 1;
                 this.dualSenseAudioDeviceLabel = String(output.label || 'DualSense audio output');
-                this.dualSenseAudioConnected = true;
+                this.dualSenseAudioEnabled = true;
                 return true;
             } catch (error) {
                 this.dualSenseAudioError = error && error.message
@@ -536,7 +536,7 @@
         }
 
         dualSenseAudioConnected() {
-            return !!this.dualSenseAudioConnected;
+            return !!this.dualSenseAudioEnabled;
         }
 
         dualSenseAudioDevice() {
